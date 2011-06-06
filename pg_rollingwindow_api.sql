@@ -167,7 +167,13 @@ DECLARE
               AND relkind = 'r')
         $q$;
     parent_index_str text;
-    child_index_str text;
+    suffix_start int;
+    suffix_str text;
+    column_name_start int;
+    column_name_stop int;
+    column_name_str text;
+    index_name_str text;
+    create_index_str text;
 BEGIN
     limbo := parent || '_limbo';
     IF EXISTS ( SELECT 1
@@ -176,7 +182,7 @@ BEGIN
         WHERE relname = limbo
           AND nspname = parent_namespace )
     THEN
-        RETURN NULL;
+        RETURN NULL;    -- already exists.
     END IF;
     create_str := 'CREATE TABLE ' || quote_ident(limbo)
         || '() INHERITS ( ' || quote_ident(parent) || ' )';
@@ -185,9 +191,16 @@ BEGIN
     FOR index_oid IN EXECUTE index_query_str USING parent_namespace, parent
     LOOP
         parent_index_str := pg_get_indexdef(index_oid);
-        -- I'm not sure this is schema friendly... ?
-        child_index_str := replace(parent_index_str, parent, limbo);
-        EXECUTE child_index_str;
+        suffix_start := position(' USING ' IN parent_index_str) + length(' USING ');
+        suffix_str := substring(parent_index_str FROM suffix_start);
+        column_name_start := position(parent IN parent_index_str) + length(parent) + 1;
+        column_name_stop := position(' ON ' IN parent_index_str);
+        column_name_str := substring(parent_index_str FROM column_name_start FOR column_name_stop - column_name_start);
+        index_name_str := 'idx_' || limbo || '_' || column_name_str;
+        create_index_str := 'CREATE INDEX ' || quote_ident(index_name_str)
+            || ' ON ' || quote_ident(limbo)
+            || ' USING ' || suffix_str;
+        EXECUTE create_index_str;
     END LOOP;
     RETURN limbo;
 END;
@@ -310,20 +323,32 @@ DECLARE
               AND relkind = 'r')
         $q$;
     parent_index_str text;
-    child_index_str text;
+    suffix_start int;
+    suffix_str text;
+    column_name_start int;
+    column_name_stop int;
+    column_name_str text;
+    index_name_str text;
+    create_index_str text;
 BEGIN
     child := rolling_window.child_name(parent, lower_bound);
     FOR index_oid IN EXECUTE index_query_str USING parent_namespace, parent
     LOOP
         parent_index_str := pg_get_indexdef(index_oid);
-        -- I'm not sure this is schema friendly... ?
-        child_index_str := replace(parent_index_str, parent, child);
-        -- TODO: try/catch? what about when the index already exists?
-        EXECUTE child_index_str;
+        suffix_start := position(' USING ' IN parent_index_str) + length(' USING ');
+        suffix_str := substring(parent_index_str FROM suffix_start);
+        column_name_start := position(parent IN parent_index_str) + length(parent) + 1;
+        column_name_stop := position(' ON ' IN parent_index_str);
+        column_name_str := substring(parent_index_str FROM column_name_start FOR column_name_stop - column_name_start);
+        index_name_str := 'idx_' || child || '_' || column_name_str;
+        create_index_str := 'CREATE INDEX ' || quote_ident(index_name_str)
+            || ' ON ' || quote_ident(child)
+            || ' USING ' || suffix_str;
+        EXECUTE create_index_str;
     END LOOP;
 END;
 $definition$ LANGUAGE plpgsql;
-COMMENT ON FUNCTION clone_indexes_to_partition(name, bigint)
+COMMENT ON FUNCTION clone_indexes_to_partition(name, name, bigint)
 IS 'Apply all the indexes on a parent table to a partition.';
 
 
@@ -693,6 +718,57 @@ IS 'Add any missing boundary constraints for all columns listed in columns_to_fr
 
 
 ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION highest_freezable(
+    parent_namespace name,
+    parent name
+) RETURNS name AS $definition$
+DECLARE
+    data_lag_window bigint;
+    child_name name;
+    reltuples real;
+    non_empty_partitions bigint := 0;
+BEGIN
+    SELECT m.data_lag_window
+        INTO STRICT data_lag_window
+        FROM rolling_window.maintained_table m
+        INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
+        INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
+        WHERE c.relname = parent
+          AND n.nspname = parent_namespace;
+    IF data_lag_window IS NULL
+    THEN
+        RAISE EXCEPTION 'table not found in rolling_window.maintained_table';
+    END IF;
+    FOR child_name, reltuples IN
+        SELECT p.relname, p.reltuples
+        FROM rolling_window.list_partitions(parent_namespace, parent) AS p
+        WHERE p.relname ~ (parent || E'_\\d+$')
+        ORDER BY p.relname DESC
+    LOOP        -- step through the partitions going from highest to lowest
+        IF non_empty_partitions < data_lag_window
+        THEN
+            IF non_empty_partitions > 0     -- if I have seen any data in a partition before...
+            THEN                            -- continue counting
+                non_empty_partitions := non_empty_partitions + 1;
+            ELSE
+                IF reltuples > 0            -- otherwise find the first partition that contains data
+                THEN
+                    non_empty_partitions := 1;  -- and start counting.
+                END IF;
+            END IF;
+        ELSE
+            RETURN child_name;
+        END IF;
+    END LOOP;
+    -- it is possible that we won't find _any_ partitions eligible for freezing.
+    RETURN NULL;
+END;
+$definition$ LANGUAGE plpgsql;
+COMMENT ON FUNCTION highest_freezable(name, name)
+IS 'Find the highest partition that is eligible for freezing.';
+
+
+---------------------------------------------------------------------
 CREATE TYPE freeze_result AS (
     partition_table_name name,
     new_constraint name
@@ -705,45 +781,30 @@ CREATE OR REPLACE FUNCTION freeze(
     parent name
 ) RETURNS SETOF freeze_result AS $definition$
 DECLARE
-    data_lag_window bigint;
+    highest_freezable name;
     child_name name;
-    reltuples real;
-    non_empty_partitions bigint := 0;
     new_constraint name;
     f_result rolling_window.freeze_result;
 BEGIN
-    SELECT m.data_lag_window
-        INTO STRICT data_lag_window
-        FROM rolling_window.maintained_table m
-        INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
-        INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
-        WHERE c.relname = parent
-          AND n.nspname = parent_namespace;
-    FOR child_name, reltuples IN
-        SELECT p.relname, p.reltuples
+    highest_freezable := rolling_window.highest_freezable(parent_namespace, parent);
+    FOR child_name IN
+        SELECT p.relname
         FROM rolling_window.list_partitions(parent_namespace, parent) AS p
         WHERE p.relname ~ (parent || E'_\\d+$')
-        ORDER BY p.relname DESC
-    LOOP        -- step through the partitions going from highest to lowest
-        IF non_empty_partitions < data_lag_window
-        THEN
-            IF reltuples > 0            -- find the first one that contains data
-            THEN
-                non_empty_partitions := non_empty_partitions + 1;
-            END IF;
-        ELSE                            -- and freeze the rest of them
-            FOR new_constraint IN
-                SELECT f.p
-                FROM rolling_window.freeze_partition(
-                    parent_namespace,
-                    parent,
-                    rolling_window.lower_bound_from_child_name(child_name))
-                AS f(p)
-            LOOP
-                f_result = ROW(child_name, new_constraint);
-                RETURN NEXT f_result;
-            END LOOP;
-        END IF;
+          AND p.relname <= highest_freezable
+        ORDER BY p.relname
+    LOOP
+        FOR new_constraint IN
+            SELECT f.p
+            FROM rolling_window.freeze_partition(
+                parent_namespace,
+                parent,
+                rolling_window.lower_bound_from_child_name(child_name))
+            AS f(p)
+        LOOP
+            f_result = ROW(child_name, new_constraint);
+            RETURN NEXT f_result;
+        END LOOP;
     END LOOP;
 END;
 $definition$ LANGUAGE plpgsql;

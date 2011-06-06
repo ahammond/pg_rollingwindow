@@ -2,8 +2,11 @@
 from logging import getLogger
 from math import floor
 from optparse import OptionParser, OptionGroup, Values
+import os
 from psycopg2 import connect, IntegrityError
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT, ISOLATION_LEVEL_READ_COMMITTED
+import re
+from subprocess import Popen, call
 
 __author__ = 'Andrew Hammond <andrew.hammond@receipt.com>'
 __copyright__ = 'Copyright (c) 2011 SmartReceipt'
@@ -18,18 +21,22 @@ class UsageError(Exception):
 class PgConnection(object):
     """Wrap psycopg2 connection to have a single persistant connection.
 
+    To share connections with other parts of the code,
+    simply pass in the connection and a None for the options.
     This isn't a multi-treaded application. Keep it simple.
     """
-    legal_arguments = ('database', 'user', 'password', 'host', 'port', 'sslmode' )
+    legal_arguments = ('database', 'username', 'password', 'host', 'port', 'sslmode' )
 
-    def __init__(self, options):
+    def __init__(self, options, connection=None):
         l = getLogger('PgConnection.__init__')
         l.debug('init')
-        self._connection = None
+        self._connection = connection
         self.arguments = {}
         for k in dir(options):
             if k in self.legal_arguments:
                 v = eval('options.%s' % k)
+                if 'username' == k:
+                    k = 'user'
                 if v is not None:
                     self.arguments[k] = v
 
@@ -47,8 +54,144 @@ class PgConnection(object):
             self._connection.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
         return self._connection
 
+
 ##########################################################################
-class RollingTable(object):
+class PartitionDumper(object):
+
+    legal_pg_arguments = ('username', 'host', 'port', 'sslmode' )   # database is handled specially because of pg_dump
+    standard_pg_dump_arguments = ['--compress=9', '--no-password']
+    # TODO: handle passwords? This would involve talking to pg_dump after it's been started.
+    # That's a little more complicated... next revision.
+
+    def __init__(self, options):
+        l = getLogger('PartitionDumper.__init__')
+
+        if 'dump_directory' not in dir(options):
+            raise UsageError('Dumpers must be instantiated with a dump_directory option')
+        #TODO: directory sanity checks.
+        self.dump_directory = options.dump_directory
+
+        self.pg_path = None
+        if 'PGPATH' in os.environ:
+            self.pg_path = os.environ['PGPATH']
+        if 'pg_path' in dir(options):
+            self.pg_path = options.pg_path
+
+        self.database = None
+        if 'database' in dir(options):
+            self.database = options.database
+
+        self.database_connection_arguments = []     # remember, PG environment variables can also provide this info.
+        for k in self.legal_pg_arguments:
+            if k in dir(options):
+                v = eval('options.%s' % k)
+                if v is not None:
+                    self.database_connection_arguments.append('--%s=%s' % (k,v))
+#        self._psql = None
+
+    def partition_pattern(self, table):
+        """Partitions should look like basetable_0000123
+
+        In other words, the base table's name, followed by an underscore, followed by a 0 prefixed decimal number.
+        """
+        return re.compile(r'^%s.*_(?P<number>\d+)$' % re.escape(table))
+
+#    @property
+#    def psql(self):
+#        if self._psql is None:
+#            self._psql = Popen('psql')  # TODO arguments?
+#        return self._psql
+
+    def dump_table(self, r, partition_name, schema_only=False):
+        """Dump the partition_name table, belonging to the RollingWindow described by r.
+        """
+        l = getLogger('PartitionDumper.dump_table')
+        dump_file = os.path.join(self.dump_directory, '%s.gz' % (partition_name,))
+        partial_dump_file = dump_file + '.partial'
+        l.debug('Dumping %s.%s partition %s to %s', r.schema, r.table, partition_name, partial_dump_file)
+        #TODO: add pipes to both stdout and stderr and capture for l.debug() / cleanlieness???
+
+        dump_command = []
+        dump_command.append('pg_dump' if self.pg_path is None else os.path.join(self.pg_path, 'pg_dump'))
+        dump_command.extend(self.database_connection_arguments)
+        dump_command.extend(self.standard_pg_dump_arguments)
+        dump_command.append('--file=%s' % (partial_dump_file,))
+        dump_command.append('--table=%s.%s' % (r.schema, partition_name))
+        if schema_only:
+            dump_command.append('--schema-only')
+        if self.database is not None:
+            dump_command.append(self.database)
+
+        l.debug('dump_command = %s', dump_command)
+        return_code = call(dump_command)
+        if return_code != 0:
+            raise RuntimeError('pg_dump failed!')   # uh, is this a reasonable exception to use?
+
+        # The usual case is that we're dumping a child table and should keep track,
+        # but... don't barf in situations where that's not the case.
+        m = self.partition_pattern(r.table).match(partition_name)
+        if m:
+            r.last_partition_dumped = int(m.group('number'))
+        os.rename(partial_dump_file, dump_file)
+        l.debug('Renamed %s to %s', partial_dump_file, dump_file)
+
+    def dump(self, r):
+        """Given a RollingWindow, dump eligible partitions.
+
+        A partition is eligible if it hasn't been dumped before (> r.last_partition_dumped)
+        and it meets the critera for being frozen (is r.data_lag_window behind the highest non-empty partition)
+
+        Special case is when last_partition_dumped == -1 (table has never been dumped)
+        In this case, we first dump the parent table, but schema only.
+        This is based on the assumption that data will be moved from the parent to a partition.
+        """
+
+        l = getLogger('PartitionDumper.dump')
+        highest_freezable = r.highest_freezable
+        l.debug('dumping for %s.%s. Highest freezable partition is %s', r.schema, r.table, r.highest_freezable)
+
+        # has table ever been dumped before?
+        if r.last_partition_dumped == -1:
+            l.info('Dumping parent table')
+            self.dump_table(r, r.table, schema_only=True)
+
+        for partition_name in r.partitions:
+            if partition_name.child_name.endswith('_limbo'):
+                l.debug('Skipping limbo partition')
+                continue
+
+            match = self.partition_pattern(r.table).match(partition_name)
+            if match is None:
+                l.warning('Skipping strange partition: %s', partition_name)
+                continue
+            if int(match.group('number')) < r.last_partition_dumped:
+                l.debug('I think I already dumped %s since it is less than %s', partition_name, r.last_partition_dumped)
+                continue
+            if partition_name > highest_freezable:      # we can get away with a string comparison since 0 padding of child names
+                l.debug('We have dumped all the freezable tables. Exiting loop.')
+                break
+            #TODO: would it be better to fork these off in parallel?
+            # That would make keeping track of last_partition_dumped a little trickier. What if one fails?
+            self.dump_table(r, partition_name)
+
+    def restore(self):
+        """Given a RollingWindow, load eligible partitions.
+
+        A partition is eligible if it hasn't already been loaded
+        and a complete copy of it is available in the dump directory.
+
+        Will raise warnings and refuse to load partitions if their parent table hasn't been loaded.
+        """
+
+        # instantiate or use psql to \i files for loading.
+        # TODO: multiple parallel psql's for load?
+        # locking issues around the creation of multiple partitions of the same parent?
+        # Probably not: create table is the only thing that really requires such...
+        pass
+
+
+##########################################################################
+class RollingWindow(object):
     """Encapsulate handling of a table and it's partitions.
 
     """
@@ -56,8 +199,8 @@ class RollingTable(object):
     MOVED = 'm'
 
     def __init__(self, db, schema, table):
-        l = getLogger('RollingTable.init')
-        l.debug('RollingTable: %s, %s', schema, table)
+        l = getLogger('RollingWindow.init')
+        l.debug('RollingWindow: %s, %s', schema, table)
         self.db = db
         self.schema = schema
         self.table = table
@@ -77,7 +220,7 @@ class RollingTable(object):
         self._last_partition_dumped = None
 
     def fetch(self):
-        l = getLogger('RollingTable.fetch')
+        l = getLogger('RollingWindow.fetch')
         l.debug('fetching %s.%s', self.schema, self.table)
         cursor = self.db.connection.cursor()
         cursor.execute('SET search_path TO %(schema)s', {'schema': self.schema})
@@ -150,10 +293,37 @@ WHERE c.relname = %(table)s
         return self._rolled_on
 
     @property
+    def data_lag_window(self):
+        if not self.is_managed:
+            raise UsageError('Table %s.%s either does not exist or is not managed. It must be added before it can be fetched.', self.schema, self.table)
+        return self._data_lag_window
+
+    @property
     def last_partition_dumped(self):
         if not self.is_managed:
             raise UsageError('Table %s.%s either does not exist or is not managed. It must be added before it can be fetched.', self.schema, self.table)
         return self._last_partition_dumped
+
+    @last_partition_dumped.setter
+    def last_partition_dumped(self, value):
+        if not self.is_managed:
+            raise UsageError('Table %s.%s either does not exist or is not managed. It must be added before it can be fetched.', self.schema, self.table)
+        cursor = self.db.connection.cursor()
+        cursor.execute("""
+UPDATE rolling_window.maintained_table
+SET last_partition_dumped = %(last_partition_dumped)s
+FROM pg_catalog.pg_class c
+INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
+WHERE rolling_window.maintained_table.relid = c.oid
+  AND c.relname = %(table)s
+  AND n.nspname = %(schema)s
+""", {'schema': self.schema, 'table': self.table,
+      'last_partition_dumped': value})
+        if cursor.rowcount < 1:
+            raise UsageError('Update of last_partition_dumped failed. Why?')
+        if cursor.rowcount > 1:
+            raise UsageError('Update of last_partition_dumped hit %d rows... it should not be possible to update more than 1 row!!!' % cursor.rowcount)
+        self._last_partition_dumped = value
 
     def add(self, attname, step,
             non_empty_partitions_to_keep, reserve_partitions_to_keep,
@@ -333,21 +503,9 @@ RETURNING relid,
 
     class Partition(object):
         def __init__(self, child_name, estimated_rows, total_relation_size_in_bytes):
-            self._child_name = child_name
-            self._estimated_rows = estimated_rows
-            self._total_relation_size_in_bytes = total_relation_size_in_bytes
-
-        @property
-        def child_name(self):
-            return self._child_name
-
-        @property
-        def estimated_rows(self):
-            return self._estimated_rows
-
-        @property
-        def total_relation_size_in_bytes(self):
-            return self._total_relation_size_in_bytes
+            self.child_name = child_name
+            self.estimated_rows = estimated_rows
+            self.total_relation_size_in_bytes = total_relation_size_in_bytes
 
         def __cmp__(self, other):
             if self.child_name != other.child_name:
@@ -356,15 +514,22 @@ RETURNING relid,
                 return cmp(self.estimated_rows, other.estimated_rows)
             return cmp(self.total_relation_size_in_bytes, other.total_relation_size_in_bytes)
 
-    def partitions(self):
-        'Provide a list of partitions that are part of this table, including bytesize and estimated rowcount.'
+    def partitions(self, descending=False):
+        """Provide a list of partitions that are part of this table, including bytesize and estimated rowcount.
+
+        If descending=True then return them in descending order.
+        """
+        #TODO: add only_windows=False option to only return stuff that looks like foo_0000123?
+
         l = getLogger('RollingWindow.list')
         l.debug('Listing %s.%s', self.schema, self.table)
         if not self.is_managed:
             raise UsageError('Can not list partitions of a table that is not managed.')
         cursor = self.db.connection.cursor()
-        cursor.execute('SELECT relname, floor(reltuples) AS reltuples, total_relation_size_in_bytes FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname',
-                       {'schema': self.schema, 'table': self.table})
+        query = 'SELECT relname, floor(reltuples) AS reltuples, total_relation_size_in_bytes FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname'
+        if descending:
+            query += ' DESCENDING'
+        cursor.execute(query, {'schema': self.schema, 'table': self.table})
         for r in cursor.fetchall():
             p = self.Partition(*r)
             l.debug('%s.%s has partition %s with approximately %s rows at %s bytes',
@@ -390,12 +555,23 @@ RETURNING relid,
                 return cmp(self.partition_table_name, other.partition_table_name)
             return cmp(self.new_constraint, other.new_constraint)
 
+    @property
+    def highest_freezable(self):
+        l = getLogger('RollingWindow.highest_freezable')
+        if not self.is_managed:
+            raise UsageError('Can not determine highest freezeable partition of a table that is not managed.')
+        cursor = self.db.connection.cursor()
+        cursor.execute('SELECT rolling_window.highest_freezable(%(schema), %(table))',
+             {'schema': self.schema, 'table': self.table})
+        r = cursor.fetchone()
+        return r[0]
+
     def freeze(self):
         """For all but the highest non-empty partition, add a min/max bound constraint for each freeze_column.
 
         Min and Max values are determined by scanning the table at freeze time.
         """
-        l = getLogger('RollingTable.freeze')
+        l = getLogger('RollingWindow.freeze')
         l.debug('Freezing %s.%s', self.schema, self.table)
         if not self.is_managed:
             raise UsageError('Can not freeze partitions of a table that is not managed.')
@@ -460,26 +636,29 @@ def add(options):
             continue
     if missing_a_parameter:
         return -1
-    t = RollingTable(options.db, options.schema, options.table)
+    t = RollingWindow(options.db, options.schema, options.table)
     if t.is_managed:
         l.error('%s.%s is already managed. Stopping.', options.schema, options.table)
-    t.add(options.partition_column, options.step,
-          options.partition_retention, options.partition_ahead,
-          options.freeze_columns, options.data_lag_window)
+    t.add(options.partition_column,
+          options.step,
+          options.partition_retention,
+          options.partition_ahead,
+          options.data_lag_window,
+          options.freeze_columns)
 
 ##########################################################################
 def roll(options):
     l = getLogger('roll')
     l.debug('rolling')
     if options.table is not None:   # I'm rolling a single table
-        t = RollingTable(options.db, options.schema, options.table)
+        t = RollingWindow(options.db, options.schema, options.table)
         if not t.is_managed:
             l.error('%s.%s is not managed. Stopping.', options.schema, options.table)
         t.roll()
     else:   # I'm rolling all the tables under management.
         m = MaintainedTables(options.db)
         for managed_table in m:
-            t = RollingTable(options.db, managed_table[0], managed_table[1])
+            t = RollingWindow(options.db, managed_table[0], managed_table[1])
             t.roll()
 
 ##########################################################################
@@ -487,7 +666,7 @@ def bytes_to_human(bytes):
     bytes = float(bytes)
     prefixes = ['B', 'kB', 'MB', 'GB', 'TB', 'PB']
     while (bytes / 1024) > 1:
-        bytes = bytes / 1024
+        bytes /= 1024
         prefixes.pop(0)
     return '%.1f %s' % (bytes, prefixes.pop(0))
 
@@ -495,7 +674,7 @@ def bytes_to_human(bytes):
 def list_table(db, schema, table):
     #TODO: list in order by partition name.
     l = getLogger('list_table')
-    t = RollingTable(db, schema, table)
+    t = RollingWindow(db, schema, table)
     if not t.is_managed:
         l.error('%s.%s is not managed. Stopping.', schema, table)
         return
@@ -526,7 +705,7 @@ def list(options):
 def freeze_table(db, schema, table):
     l = getLogger('freeze_table')
     l.debug('Freezing %s.%s', schema, table)
-    t = RollingTable(db, schema, table)
+    t = RollingWindow(db, schema, table)
     if not t.is_managed:
         l.error('%s.%s is not managed. Stopping.', schema, table)
         return
@@ -545,17 +724,62 @@ def freeze(options):
         for managed_table in m:
             freeze_table(options.db, managed_table[0], managed_table[1])
 
+##########################################################################
+def dump_table(db, schema, table, dump_target_directory):
+    l = getLogger('dump_table')
+    l.debug('Dumping %s.%s', schema, table)
+    t = RollingWindow(db, schema, table)
+    if not t.is_managed:
+        l.error('%s.%s is not managed. Stopping.', schema, table)
+        return
+    for dumped_partition in t.dump_partitions():
+        print 'Partition %s.%s dumped.' % (schema, dumped_partition)
+
+##########################################################################
+def dump(options):
+    l = getLogger('dump')
+    if options.table is not None:   # I'm rolling a single table
+        dump_table(options.db, options.schema, options.table)
+    else:
+        l.debug('No table specified. Dump them all.')
+        m = MaintainedTables(options.db)
+        for managed_table in m:
+            dump_table(options.db, managed_table[0], managed_table[1])
+
+##########################################################################
+def restore_table(db, schema, table):
+    l = getLogger('undump_table')
+    raise NotImplementedError('WRITEME')
+
+##########################################################################
+def restore(options):
+    l = getLogger('undump')
+    if options.table is not None:   # I'm rolling a single table
+        undump_table(options.db, options.schema, options.table)
+    else:
+        l.debug('No table specified. Undump them all.')
+        m = MaintainedTables(options.db)
+        for managed_table in m:
+            undump_table(options.db, managed_table[0], managed_table[1])
+
+##########################################################################
+def init(options):
+    """Initialize database with pg_rollingwindow_api.sql
+
+    """
+    l = getLogger('init')
+    raise NotImplementedError('WRITEME')
 
 ##########################################################################
 # Interactive commands
 actions = {
+    'init': init,
     'add': add,
     'roll': roll,
     'list': list,
     'freeze': freeze,
-    # pack
-    # ship
-    # unpack
+    'dump': dump,
+    'restore': restore,
 }
 
 def main():
@@ -571,6 +795,15 @@ Roll the table (or all maintained tables if no table parameter):
 
 Freeze all but the highest non-empty partition for the table (or all maintained tables if no table parameter):
     freeze [-t <table>] [<PostgreSQL options>]
+
+Dump all frozen / freezable partitions which have not yet been dumped:
+    dump --dump_directory=/path/to/dir
+
+Load all partition dump files that have not yet been loaded from the dump_directory:
+    restore --dump_directory=/path/to/dir
+
+Initialize the database with the rolling_window schema and internal database API:
+    init [<PostgreSQL options>]
 
 Note that for PostgreSQL options, standard libpq conventions are followed.
 See http://www.postgresql.org/docs/current/static/libpq-envars.html')
@@ -599,6 +832,10 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
         help='columns to be constrained when partitions are frozen')
     parser.add_option('-l', '--data_lag_window', default=0,
         help='partitions following the highest partition with data to hold back from freezing / dumping')
+    parser.add_option('--pg_path',
+        help='path for pg_dump and psql, default searchs system path')
+    parser.add_option('--dump_directory',
+        help='directory where dumps of partitions will dropped / searched for when using dump or undump command')
 
     postgres_group = OptionGroup(parser, 'PostgreSQL connection options')
     postgres_group.add_option('-h', '--host',

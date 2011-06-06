@@ -52,7 +52,7 @@ class PatchType(type):
         return type.__new__(mcs, name, bases, dict)
 
     @classmethod
-    def patch_setup(cls, test_fn):
+    def patch_setup(mcs, test_fn):
         """
         Wrapper around a test method that calls setup_patches() and
         subsequently calls the actual test method.
@@ -91,7 +91,7 @@ class PatchedTestCase(unittest2.case.TestCase):
         pass
 
     def _setup_patches(self, patch_args):
-        ''' Creates mock instance attributes.
+        """Creates mock instance attributes.
 
         Naming is as follows:
         @patch_object(object, attr) gets mock_object_attr
@@ -101,7 +101,7 @@ class PatchedTestCase(unittest2.case.TestCase):
         Yes, you could name things such that they clobber each other,
         and no, this module won't protect you against that.
         So... it's probably a good idea if you Don't Do That.
-        '''
+        """
 
         self.assertEquals(len(self.patches[self.__class__.__name__]), len(patch_args))
         for (cls, attr), mock in zip(self.patches[self.__class__.__name__], reversed(patch_args)):
@@ -115,8 +115,8 @@ class PatchedTestCase(unittest2.case.TestCase):
 
     @classmethod
     def patch(cls, attr, **kwargs):
-        ''' Wrapper around the mock module's @patch method.
-        '''
+        """ Wrapper around the mock module's @patch method.
+        """
 
         cls.patches.setdefault(cls.__name__, []).append((None, attr))
         return patch(attr, **kwargs)
@@ -131,11 +131,11 @@ class PatchedTestCase(unittest2.case.TestCase):
 
     @classmethod
     def patch_object(cls, obj, attr, **kwargs):
-        '''Wrapper around the mock module's @patch.object method.
+        """Wrapper around the mock module's @patch.object method.
 
         In order to track the paches made, this method is called, which in turn
         calls the mock module.
-        '''
+        """
 
         cls.patches.setdefault(cls.__name__, []).append((obj, attr))
         return patch.object(obj, attr, **kwargs)

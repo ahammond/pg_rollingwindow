@@ -4,7 +4,8 @@ This is a tool to maintain rolling window tables in PostgreSQL.
 
 A rolling window table is a table with the following characteristics
 1) Has a FIFO retention policy (first in, first out)
-2) Has a bigint not null column that is (generally) increasing over time, which can be used for partitioning.
+2) Has a bigint not null column that is (generally) increasing over time,
+which can be used for partitioning.
 3) Retention requirements can be defined by a range of values in the partition column.
 (in other words, keep data where partition_column BETWEEN lower_bound AND upper_bound)
 
@@ -21,6 +22,12 @@ your queries. Once a partition has been frozen, you may not be able to add
 further data to it (stuff that conflicts with the constraints obviously won't
 be allowed in)... so don't freeze if you expect substantial out of order input.
 Such data will end up in the limbo table. Data in limbo is bad for you, go clean it up.
+NOTE: The index cloning code is not currently all that smart.
+It will fail on add while attempting to create the limbo partition (or clone indexes to partitions)
+in cases where either the index name, the table name or the column name involved contain
+any of the following strings: " USING " or " ON ". Note the leading and following spaces.
+Solving this would probably involve clever tricks with regex.
+Probably not impossible, but certainly not trivial and more work than such a tiny corner merits.
 
 Cleaning up data in limbo can be done a bunch of ways. You could just delete it.
 Or, you could delete stuff older than the oldest partition (this seems reasonable).

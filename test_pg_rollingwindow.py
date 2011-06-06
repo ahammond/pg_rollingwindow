@@ -10,6 +10,7 @@ import optparse
 from logging import RootLogger, getLogger
 from mock import Mock, MagicMock, sentinel
 from patched_unittest2 import *
+from subprocess import Popen, call
 
 import pg_rollingwindow
 import psycopg2
@@ -33,7 +34,7 @@ class TestPgConnection(PatchedTestCase):
         c = self.target.connection
 
     def verify(self, connect_parameters):
-        legal_arguments = ('database', 'user', 'password', 'host', 'port', 'sslmode' )
+        legal_arguments = ('database', 'username', 'password', 'host', 'port', 'sslmode' )
         expected_arguments = dict((k,v) for k,v in connect_parameters.iteritems() if k in legal_arguments)
         self.assertEqual(1, self.mock_connect.call_count)
         self.assertDictEqual(expected_arguments, self.mock_connect.call_args[1])
@@ -43,7 +44,7 @@ class TestPgConnection(PatchedTestCase):
         self.verify({})
 
     def test_all_legal_parameters(self):
-        params = {'database': 'a', 'user': 'b', 'password': 'c', 'host': 'd', 'sslmode': True}
+        params = {'database': 'a', 'username': 'b', 'password': 'c', 'host': 'd', 'sslmode': True}
         self.runner(params)
         self.verify(params)
 
@@ -52,16 +53,16 @@ class TestPgConnection(PatchedTestCase):
         self.runner(params)
         self.verify(params)
 
-class TestRollingTable(PatchedTestCase):pass
-@TestRollingTable.patch('pg_rollingwindow.getLogger', spec=getLogger)
-class TestRollingTable(PatchedTestCase):
+class TestRollingWindow(PatchedTestCase):pass
+@TestRollingWindow.patch('pg_rollingwindow.getLogger', spec=getLogger)
+class TestRollingWindow(PatchedTestCase):
 
     fetch_queue = []
 
     @property
     def standard_fetch_results(self):
         return copy.deepcopy(
-                [              # becomes a list, but declares as a tuple so it will get copied
+                [
                     (                                   # SELECT ...
                         (9872435,           # relid
                          'fake_attname',    # partitioning attribute name
@@ -72,7 +73,7 @@ class TestRollingTable(PatchedTestCase):
                          'fake_rolled_on',  # rolled on
                          'fake_rows',       # parent_estimated_rows
                          'fake_bytes',      # parent_total_relation_size_in_bytes
-                         8423,              # data_lag_window
+                         3,                 # data_lag_window
                          30),               # last_partition_dumped
                     ),                                  # SELECT freeze columns
                     (   ('f1',),
@@ -96,7 +97,7 @@ class TestRollingTable(PatchedTestCase):
         self.mock_connection.cursor = self.mock_cursor
         self.mock_cursor.return_value.fetchone.side_effect = self.mock_fetchone
         self.mock_cursor.return_value.fetchall.side_effect = self.mock_fetchall
-        self.target = pg_rollingwindow.RollingTable(self.mock_PgConnection, 'fake_schema', 'fake_table')
+        self.target = pg_rollingwindow.RollingWindow(self.mock_PgConnection, 'fake_schema', 'fake_table')
 
     def runner(self):
         pass
@@ -317,7 +318,7 @@ RETURNING relid,
         self.fetch_queue = self.standard_fetch_results + [copy.deepcopy(expected_results)]
         for p in self.target.partitions():
             expected_tuple = expected_results.pop(0)
-            expected_partition = pg_rollingwindow.RollingTable.Partition(*expected_tuple)
+            expected_partition = pg_rollingwindow.RollingWindow.Partition(*expected_tuple)
             self.assertEqual(expected_partition, p)
         method_calls = self.mock_cursor.return_value.method_calls
         n = self.verify_standard_fetch()
@@ -341,7 +342,7 @@ RETURNING relid,
 
         for fp in self.target.freeze():
             expected_tuple = expected_results.pop(0)
-            expected_frozen_partition = pg_rollingwindow.RollingTable.FrozenPartition(expected_tuple[0], expected_tuple[1])
+            expected_frozen_partition = pg_rollingwindow.RollingWindow.FrozenPartition(expected_tuple[0], expected_tuple[1])
             self.assertEqual(expected_frozen_partition, fp)
         method_calls = self.mock_cursor.return_value.method_calls
         n = self.verify_standard_fetch()
@@ -352,6 +353,44 @@ RETURNING relid,
         n += 1
         self.assertEqual('fetchall', method_calls[n][0])
         self.assertEqual((), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual(n, len(method_calls))
+
+    def test_highest_freezable(self):
+        self.fetch_queue = self.standard_fetch_results + [('p_00006', )]
+        self.assertEqual('p_00006', self.target.highest_freezable)
+        method_calls = self.mock_cursor.return_value.method_calls
+        n = self.verify_standard_fetch()
+        self.assertEqual('execute', method_calls[n][0])
+        self.assertEqual(('SELECT rolling_window.highest_freezable(%(schema), %(table))',
+                          {'schema': 'fake_schema', 'table': 'fake_table'}), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('fetchone', method_calls[n][0])
+        self.assertEqual((), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual(n, len(method_calls))
+
+    def test_last_partition_dumped_setter(self):
+        self.fetch_queue = self.standard_fetch_results
+        self.mock_cursor.return_value.rowcount = 1
+        self.target.last_partition_dumped = 12345
+        self.assertEqual(12345, self.target.last_partition_dumped)
+        method_calls = self.mock_cursor.return_value.method_calls
+        n = self.verify_standard_fetch()
+        self.assertEqual('execute', method_calls[n][0])
+        self.assertEqual(("""
+UPDATE rolling_window.maintained_table
+SET last_partition_dumped = %(last_partition_dumped)s
+FROM pg_catalog.pg_class c
+INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
+WHERE rolling_window.maintained_table.relid = c.oid
+  AND c.relname = %(table)s
+  AND n.nspname = %(schema)s
+""", {'schema': 'fake_schema', 'table': 'fake_table',
+      'last_partition_dumped': 12345}), method_calls[n][1])
         self.assertEqual({}, method_calls[n][2])
         n += 1
         self.assertEqual(n, len(method_calls))
@@ -415,3 +454,69 @@ class TestMaintainedTables(PatchedTestCase):
             self.assertEqual(expected_tables[table_count], t)
             table_count += 1
         self.assertEqual(3, table_count)
+
+class TestPartitionDumper(PatchedTestCase):pass
+@TestPartitionDumper.patch('pg_rollingwindow.getLogger', spec=getLogger)
+@TestPartitionDumper.patch('pg_rollingwindow.call', spec=call)
+class TestPartitionDumper(PatchedTestCase):
+
+    _partitions = []
+
+    def postSetUpPreRun(self):
+        self._partitions = [
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000010', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000020', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000030', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000040', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000050', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000060', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000070', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000080', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000090', 10, 10),
+            ]
+        rw = Mock(spec=pg_rollingwindow.RollingWindow)
+        self.mock_RollingWindow = rw
+        rw.table = Mock()
+        rw.table.return_value = 'fake_table'
+        rw.schema = Mock()
+        rw.schema.return_value = 'fake_schema'
+        rw.last_partition_dumped = Mock()
+        rw.last_partition_dumped.return_value = 10
+        rw.highest_freezable = Mock()
+        rw.highest_freezable.return_value = 50
+        # TODO: this doesn't work... which is blocking the two tests below from implementation. :(
+        rw.partitions = iter(self._partitions)
+
+    def optionize(self, connect_parameters):
+        options = optparse.Values()
+        for k,v in connect_parameters.iteritems():
+            options.ensure_value(k, v)
+        return options
+
+    def runner(self, connect_parameters):
+        self.target = pg_rollingwindow.PartitionDumper(self.optionize(connect_parameters))
+
+    def verify(self, connect_parameters):
+        pass_along_arguments = ('username', 'host', 'port')
+        expected_arguments = dict((k,v) for k,v in connect_parameters.iteritems() if k in pass_along_arguments)
+        self.assertEqual(1, self.mock_connect.call_count)
+        self.assertDictEqual(expected_arguments, self.mock_connect.call_args[1])
+
+    def test_missing_dumpdir(self):
+        options = self.optionize({})
+        self.assertRaises(pg_rollingwindow.UsageError,  pg_rollingwindow.PartitionDumper, options)
+
+#    def test_missing_database(self):
+#        o = dict(dump_directory='/fake/dir')
+#        self.runner(o)
+#        self.target.dump(self.mock_RollingWindow)
+#        self.verify(o)
+#        #TODO: finish test...
+#
+#    def test_dump_three(self):
+#        o = dict(database='fake_db', host='fake_host', port='fake_port', dump_directory='fake_dumpdir', pg_path='fake_path')
+#        self.runner(o)
+#        self.target.dump(self.mock_RollingWindow)
+#        self.verify(o)
+#        #TODO: finish test...

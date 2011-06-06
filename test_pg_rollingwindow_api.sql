@@ -60,5 +60,7 @@ SELECT rolling_window.constrain_partition('public', 'foo', 10, 'ts') ;
 
 SELECT * FROM rolling_window.freeze_partition('public', 'foo', 0) ;
 
+SELECT rolling_window.highest_freezable('public', 'foo') ;
+
 SELECT * FROM rolling_window.freeze('public', 'foo') ;
 
