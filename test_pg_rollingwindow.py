@@ -8,6 +8,7 @@ And unittest2 (which is pretty standard these days, seems to me)
 import copy
 import optparse
 from logging import RootLogger, getLogger
+import os
 from mock import Mock, MagicMock, sentinel
 from patched_unittest2 import *
 from subprocess import Popen, call
@@ -35,7 +36,7 @@ class TestPgConnection(PatchedTestCase):
 
     def verify(self, connect_parameters):
         legal_arguments = ('database', 'username', 'password', 'host', 'port', 'sslmode' )
-        expected_arguments = dict((k,v) for k,v in connect_parameters.iteritems() if k in legal_arguments)
+        expected_arguments = dict(('user' if k == 'username' else k,v) for k,v in connect_parameters.iteritems() if k in legal_arguments)
         self.assertEqual(1, self.mock_connect.call_count)
         self.assertDictEqual(expected_arguments, self.mock_connect.call_args[1])
 
@@ -310,18 +311,15 @@ RETURNING relid,
         n += 1
         self.assertEqual(n, len(method_calls))  # make sure we have covered all the calls
 
-    def test_parititons_unmanaged(self):
-        self.assertRaises(pg_rollingwindow.UsageError, self.target.partitions().next)
-
     def test_partitions(self):
         expected_results = [('t1', 234.23, 230948),('t2', 0, 0),('t3', 12309, 2309840)]
-        self.fetch_queue = self.standard_fetch_results + [copy.deepcopy(expected_results)]
+        self.fetch_queue = [copy.deepcopy(expected_results)]
         for p in self.target.partitions():
             expected_tuple = expected_results.pop(0)
             expected_partition = pg_rollingwindow.RollingWindow.Partition(*expected_tuple)
             self.assertEqual(expected_partition, p)
         method_calls = self.mock_cursor.return_value.method_calls
-        n = self.verify_standard_fetch()
+        n = 0
         self.assertEqual('execute', method_calls[n][0])     # list_partitions
         self.assertEqual(('SELECT relname, floor(reltuples) AS reltuples, total_relation_size_in_bytes FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname',
                        {'schema': 'fake_schema', 'table': 'fake_table'}), method_calls[n][1])
@@ -363,7 +361,7 @@ RETURNING relid,
         method_calls = self.mock_cursor.return_value.method_calls
         n = self.verify_standard_fetch()
         self.assertEqual('execute', method_calls[n][0])
-        self.assertEqual(('SELECT rolling_window.highest_freezable(%(schema), %(table))',
+        self.assertEqual(('SELECT rolling_window.highest_freezable(%(schema)s, %(table)s)',
                           {'schema': 'fake_schema', 'table': 'fake_table'}), method_calls[n][1])
         self.assertEqual({}, method_calls[n][2])
         n += 1
@@ -457,66 +455,459 @@ class TestMaintainedTables(PatchedTestCase):
 
 class TestPartitionDumper(PatchedTestCase):pass
 @TestPartitionDumper.patch('pg_rollingwindow.getLogger', spec=getLogger)
+@TestPartitionDumper.patch('pg_rollingwindow.access', spec=os.access)
+#@TestPartitionDumper.patch('pg_rollingwindow.environ', spec=None)  # TODO: patch_dict?  need to test PGPATH stuff.
+@TestPartitionDumper.patch('pg_rollingwindow.listdir', spec=os.listdir)
+@TestPartitionDumper.patch('pg_rollingwindow.rename', spec=os.rename)
+@TestPartitionDumper.patch('pg_rollingwindow.exists', spec=os.path.exists)
+@TestPartitionDumper.patch('pg_rollingwindow.isdir', spec=os.path.isdir)
+@TestPartitionDumper.patch('pg_rollingwindow.isfile', spec=os.path.isfile)
 @TestPartitionDumper.patch('pg_rollingwindow.call', spec=call)
 class TestPartitionDumper(PatchedTestCase):
-
-    _partitions = []
+    maxDiff = None
 
     def postSetUpPreRun(self):
-        self._partitions = [
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000010', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000020', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000030', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000040', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000050', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000060', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000070', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000080', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000090', 10, 10),
+        _partitions = [
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000000', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000010', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000020', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000030', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000040', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000050', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000060', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000070', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000080', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000090', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_limbo', 10, 10),
             ]
-        rw = Mock(spec=pg_rollingwindow.RollingWindow)
+        _list_dir = [
+                'fake_schema.fake_table.pgdump',            # the parent table
+                'fake_schema.fake_table_0000000000000000000.pgdump',
+                'fake_schema.fake_table_0000000000000000010.pgdump',
+                'fake_schema.fake_table_0000000000000000020.pgdump',
+                'fake_schema.fake_table_0000000000000000030.pgdump',
+                'fake_schema.fake_table_0000000000000000040.pgdump',
+            ]
+
+        self.mock_getLogger.return_value = Mock(spec=RootLogger)
+        rw = MagicMock(spec=pg_rollingwindow.RollingWindow)
         self.mock_RollingWindow = rw
-        rw.table = Mock()
-        rw.table.return_value = 'fake_table'
-        rw.schema = Mock()
-        rw.schema.return_value = 'fake_schema'
-        rw.last_partition_dumped = Mock()
-        rw.last_partition_dumped.return_value = 10
-        rw.highest_freezable = Mock()
-        rw.highest_freezable.return_value = 50
-        # TODO: this doesn't work... which is blocking the two tests below from implementation. :(
-        rw.partitions = iter(self._partitions)
+        rw.table = 'fake_table'
+        rw.schema = 'fake_schema'
+        rw.relid = 1234     # the parent table should appear to be loaded by default
+        rw.last_partition_dumped = 40
+        rw.highest_freezable = 'fake_table_0000000000000000080'     #TODO: this should really be a property so we can see if it was called.
+        partitions_generator = rw.partitions.return_value
+        partitions_generator.__iter__.return_value = iter(_partitions)
+        self.mock_access.return_value = True
+        self.mock_listdir.return_value = _list_dir
+        self.mock_exists.return_value = True
+        self.mock_isdir.return_value = True
+        self.mock_isfile.return_value = True
+        self.mock_call.return_value = 0
 
     def optionize(self, connect_parameters):
         options = optparse.Values()
+        options.ensure_value('db', 'fake_db')       # mandatory for
         for k,v in connect_parameters.iteritems():
             options.ensure_value(k, v)
         return options
 
-    def runner(self, connect_parameters):
+    def runner(self, connect_parameters, ):
         self.target = pg_rollingwindow.PartitionDumper(self.optionize(connect_parameters))
 
     def verify(self, connect_parameters):
         pass_along_arguments = ('username', 'host', 'port')
         expected_arguments = dict((k,v) for k,v in connect_parameters.iteritems() if k in pass_along_arguments)
-        self.assertEqual(1, self.mock_connect.call_count)
-        self.assertDictEqual(expected_arguments, self.mock_connect.call_args[1])
+        # TODO: more stuff to verify that is common between calls?
 
-    def test_missing_dumpdir(self):
+    def test_missing_dump_directory_option(self):
         options = self.optionize({})
         self.assertRaises(pg_rollingwindow.UsageError,  pg_rollingwindow.PartitionDumper, options)
 
-#    def test_missing_database(self):
-#        o = dict(dump_directory='/fake/dir')
-#        self.runner(o)
-#        self.target.dump(self.mock_RollingWindow)
-#        self.verify(o)
-#        #TODO: finish test...
-#
-#    def test_dump_three(self):
-#        o = dict(database='fake_db', host='fake_host', port='fake_port', dump_directory='fake_dumpdir', pg_path='fake_path')
-#        self.runner(o)
-#        self.target.dump(self.mock_RollingWindow)
-#        self.verify(o)
-#        #TODO: finish test...
+    def test_dump_table_dump_directory_not_exists(self):
+        o = dict(dump_directory='/fake/dir')
+        self.mock_exists.return_value = False
+        self.runner(o)
+        self.verify(o)
+        self.assertRaises(pg_rollingwindow.UsageError, self.target.dump_table, self.mock_RollingWindow, 'fake_partition')
+
+    def test_restore_file_dump_directory_not_exists(self):
+        o = dict(dump_directory='/fake/dir')
+        self.mock_exists.return_value = False
+        self.runner(o)
+        self.verify(o)
+        self.assertRaises(pg_rollingwindow.UsageError, self.target.restore_file, self.mock_RollingWindow, 'fake_filename')
+
+    def test_dump_table_dump_directory_not_isdir(self):
+        o = dict(dump_directory='/fake/dir')
+        self.mock_isdir.return_value = False
+        self.runner(o)
+        self.verify(o)
+        self.assertRaises(pg_rollingwindow.UsageError, self.target.dump_table, self.mock_RollingWindow, 'fake_partition')
+
+    def test_restore_file_dump_directory_not_isdir(self):
+        o = dict(dump_directory='/fake/dir')
+        self.mock_isdir.return_value = False
+        self.runner(o)
+        self.verify(o)
+        self.assertRaises(pg_rollingwindow.UsageError, self.target.restore_file, self.mock_RollingWindow, 'fake_filename')
+
+    def test_dump_table_dump_directory_not_access(self):
+        o = dict(dump_directory='/fake/dir')
+        self.mock_access.return_value = False
+        self.runner(o)
+        self.verify(o)
+        self.assertRaises(pg_rollingwindow.UsageError, self.target.dump_table, self.mock_RollingWindow, 'fake_partition')
+
+    def test_restore_file_dump_directory_not_access(self):
+        o = dict(dump_directory='/fake/dir')
+        self.mock_access.return_value = False
+        self.runner(o)
+        self.verify(o)
+        self.assertRaises(pg_rollingwindow.UsageError, self.target.restore_file, self.mock_RollingWindow, 'fake_filename')
+
+    def test_dump_table_go_right(self):
+        o = dict(dump_directory='/fake/dir', database='fake_database')
+        self.runner(o)
+        self.target.dump_table(self.mock_RollingWindow, 'fake_table_0000000000000000000')
+        self.verify(o)
+        self.assertEqual(
+            [((['pg_dump', '--format=custom', '--compress=9', '--no-password',
+                '--file=/fake/dir/fake_schema.fake_table_0000000000000000000.pgdump.partial',
+                '--table=fake_schema.fake_table_0000000000000000000', 'fake_database'], ),
+              {})],
+            self.mock_call.call_args_list)
+        # check that last_partition_dumped was updated
+#        self.mock_RollingWindow.call_args_list
+        self.assertEqual(
+            [(('/fake/dir/fake_schema.fake_table_0000000000000000000.pgdump.partial',
+               '/fake/dir/fake_schema.fake_table_0000000000000000000.pgdump'),
+              {})],
+            self.mock_rename.call_args_list)
+
+    def test_dump_table_weird_partition(self):
+        o = dict(dump_directory='/fake/dir', database='fake_database')
+        self.runner(o)
+        self.target.dump_table(self.mock_RollingWindow, 'weird_partition_name')
+        self.verify(o)
+        self.assertEqual(
+            [((['pg_dump', '--format=custom', '--compress=9', '--no-password',
+                '--file=/fake/dir/fake_schema.weird_partition_name.pgdump.partial',
+                '--table=fake_schema.weird_partition_name', 'fake_database'], ),
+              {})],
+            self.mock_call.call_args_list)
+        # check that last_partition_dumped was NOT updated
+#        self.mock_RollingWindow.call_args_list
+        self.assertEqual(
+            [(('/fake/dir/fake_schema.weird_partition_name.pgdump.partial',
+               '/fake/dir/fake_schema.weird_partition_name.pgdump'),
+              {})],
+            self.mock_rename.call_args_list)
+
+    def test_dump_table_missing_database(self):
+        o = dict(dump_directory='/fake/dir')
+        self.runner(o)
+        self.target.dump_table(self.mock_RollingWindow, 'fake_table_0000010')
+        self.verify(o)
+        self.assertEqual(
+            [((['pg_dump', '--format=custom', '--compress=9', '--no-password',
+                '--file=/fake/dir/fake_schema.fake_table_0000010.pgdump.partial',
+                '--table=fake_schema.fake_table_0000010'], ),
+              {})],
+            self.mock_call.call_args_list)
+        # check that last_partition_dumped was updated
+#        self.mock_RollingWindow.call_args_list
+        self.assertEqual(
+            [(('/fake/dir/fake_schema.fake_table_0000010.pgdump.partial',
+               '/fake/dir/fake_schema.fake_table_0000010.pgdump'),
+              {})],
+            self.mock_rename.call_args_list)
+
+    def test_eligible_to_dump_go_right(self):
+        o = dict(database='fake_db', host='fake_host', port='fake_port', dump_directory='fake_dumpdir', pg_path='fake_path')
+        self.runner(o)
+        actual_results = [e for e in self.target.eligible_to_dump(self.mock_RollingWindow)]
+        self.verify(o)
+        self.assertEqual([
+            pg_rollingwindow.PartitionDumper.EligiblePartition('fake_table_0000000000000000050',False),
+            pg_rollingwindow.PartitionDumper.EligiblePartition("fake_table_0000000000000000060",False),
+            pg_rollingwindow.PartitionDumper.EligiblePartition("fake_table_0000000000000000070",False),
+            pg_rollingwindow.PartitionDumper.EligiblePartition("fake_table_0000000000000000080",False)
+        ], actual_results)
+        log_calls = self.mock_getLogger.return_value.method_calls
+        n = 0
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Examining %s.%s for dumping. Highest freezable partition is %s', 'fake_schema', 'fake_table', 'fake_table_0000000000000000080'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Considering %s for eligibility', 'fake_table_0000000000000000000'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('I think I already dumped %s since %d is less than %d', 'fake_table_0000000000000000000', 0, 40), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Considering %s for eligibility', 'fake_table_0000000000000000010'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('I think I already dumped %s since %d is less than %d', 'fake_table_0000000000000000010', 10, 40), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Considering %s for eligibility', 'fake_table_0000000000000000020'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('I think I already dumped %s since %d is less than %d', 'fake_table_0000000000000000020', 20, 40), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Considering %s for eligibility', 'fake_table_0000000000000000030'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('I think I already dumped %s since %d is less than %d', 'fake_table_0000000000000000030', 30, 40), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Considering %s for eligibility', 'fake_table_0000000000000000040'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('I think I already dumped %s since %d is less than %d', 'fake_table_0000000000000000040', 40, 40), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Considering %s for eligibility', 'fake_table_0000000000000000050'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('%s looks eligible', 'fake_table_0000000000000000050'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Considering %s for eligibility', 'fake_table_0000000000000000060'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('%s looks eligible', 'fake_table_0000000000000000060'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Considering %s for eligibility', 'fake_table_0000000000000000070'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('%s looks eligible', 'fake_table_0000000000000000070'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Considering %s for eligibility', 'fake_table_0000000000000000080'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('%s looks eligible', 'fake_table_0000000000000000080'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Considering %s for eligibility', 'fake_table_0000000000000000090'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('%s is higher than %s, so we have dumped all the freezable tables.', 'fake_table_0000000000000000090', 'fake_table_0000000000000000080'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual(n, len(log_calls))
+
+    def test_eligible_to_dump_parent_partition(self):
+        o = dict(database='fake_db', host='fake_host', port='fake_port', dump_directory='fake_dumpdir', pg_path='fake_path')
+        self.runner(o)
+        self.mock_RollingWindow.last_partition_dumped = -1
+        self.mock_RollingWindow.highest_freezable = None
+        actual_results = [e for e in self.target.eligible_to_dump(self.mock_RollingWindow)]
+        self.verify(o)
+        self.assertEqual([pg_rollingwindow.PartitionDumper.EligiblePartition('fake_table', True)], actual_results)
+        log_calls = self.mock_getLogger.return_value.method_calls
+        n = 0
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Examining %s.%s for dumping. Highest freezable partition is %s', 'fake_schema', 'fake_table', None), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('info', log_calls[n][0])
+        self.assertEqual(('Parent table is eligible', ), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual(n, len(log_calls))
+
+    def test_dump_skips_strange_partition(self):
+        o = dict(database='fake_db', host='fake_host', port='fake_port', dump_directory='fake_dumpdir', pg_path='fake_path')
+        self.runner(o)
+        _partitions = [
+                pg_rollingwindow.RollingWindow.Partition('a_weird_partition', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000000', 10, 10),
+                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000010', 10, 10),
+        ]
+        self.mock_RollingWindow.partitions.return_value.__iter__.return_value = iter(_partitions)
+        self.mock_RollingWindow.last_partition_dumped = 0
+        self.mock_RollingWindow.highest_freezable = 'fake_table_0000000000000000000'
+        actual_results = [e for e in self.target.eligible_to_dump(self.mock_RollingWindow)]
+        self.verify(o)
+#        self.assertEqual([pg_rollingwindow.PartitionDumper.EligiblePartition('fake_table_0000010', True)], actual_results)
+        log_calls = self.mock_getLogger.return_value.method_calls
+        n = 0
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Examining %s.%s for dumping. Highest freezable partition is %s', 'fake_schema', 'fake_table', 'fake_table_0000000000000000000'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Considering %s for eligibility', 'a_weird_partition'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('warning', log_calls[n][0])
+        self.assertEqual(('Skipping strange partition: %s', 'a_weird_partition'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Considering %s for eligibility', 'fake_table_0000000000000000000'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('I think I already dumped %s since %d is less than %d', 'fake_table_0000000000000000000', 0, 0), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Considering %s for eligibility', 'fake_table_0000000000000000010'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('%s is higher than %s, so we have dumped all the freezable tables.', 'fake_table_0000000000000000010', 'fake_table_0000000000000000000'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual(n, len(log_calls))
+
+    def test_restore_table_go_right(self):
+        o = dict(dump_directory='/fake/dir', database='fake_database')
+        self.runner(o)
+        self.target.restore_file(self.mock_RollingWindow, '/fake/dir/fake_schema_fake_table_0000000.pgdump')
+        self.verify(o)
+        self.assertEqual(
+            [((['pg_restore', '--format=custom', '--jobs=4', '--no-password', '--exit-on-error',
+                '--dbname=fake_database', '/fake/dir/fake_schema_fake_table_0000000.pgdump'], ),
+              {})],
+            self.mock_call.call_args_list)
+
+    def test_tables_eligible_to_restore_with_parent(self):
+        o = dict(database='fake_db', host='fake_host', port='fake_port', dump_directory='fake_dumpdir', pg_path='fake_path')
+        self.runner(o)
+        actual_results = [e for e in self.target.tables_eligible_to_restore()]
+        self.verify(o)
+        self.assertEqual([
+                pg_rollingwindow.RollingWindow('fake_db', 'fake_schema', 'fake_table'),
+            ], actual_results)
+
+    def test_tables_eligible_to_restore_no_parent(self):
+        o = dict(database='fake_db', host='fake_host', port='fake_port', dump_directory='fake_dumpdir', pg_path='fake_path')
+        self.mock_listdir.return_value = [
+                'fake_schema.fake_table_0000000000000000050.pgdump',
+                'fake_schema.fake_table_0000000000000000060.pgdump',
+                'fake_schema.fake_table_0000000000000000070.pgdump',
+                'fake_schema.fake_table_0000000000000000080.pgdump',
+                'fake_schema.fake_table_0000000000000000090.pgdump',
+                'fake_schema.fake_table_0000000000000000100.pgdump',
+                'fake_schema.fake_table_0000000000000000110.pgdump',
+                'fake_schema.fake_table_0000000000000000120.pgdump',
+                'fake_schema.fake_table_0000000000000000130.pgdump',
+                'fake_schema.fake_table_0000000000000000140.pgdump',
+            ]
+        self.runner(o)
+        actual_results = [e for e in self.target.tables_eligible_to_restore()]
+        self.verify(o)
+        self.assertEqual([
+                pg_rollingwindow.RollingWindow('fake_db', 'fake_schema', 'fake_table'),
+            ], actual_results)
+
+    def test_tables_eligible_to_restore_two(self):
+        o = dict(database='fake_db', host='fake_host', port='fake_port', dump_directory='fake_dumpdir', pg_path='fake_path')
+        self.mock_listdir.return_value = [
+                'fake_schema.fake_table_0000000000000000050.pgdump',
+                'fake_schema.other_table_0000000000000000050.pgdump',
+            ]
+        self.runner(o)
+        actual_results = [e for e in self.target.tables_eligible_to_restore()]
+        self.verify(o)
+        self.assertEqual([
+                pg_rollingwindow.RollingWindow('fake_db', 'fake_schema', 'fake_table'),
+                pg_rollingwindow.RollingWindow('fake_db', 'fake_schema', 'other_table'),
+            ], actual_results)
+
+    def test_partitions_eligible_to_restore_already_loaded(self):
+        o = dict(database='fake_db', host='fake_host', port='fake_port', dump_directory='fake_dumpdir', pg_path='fake_path')
+        self.runner(o)
+        actual_results = [e for e in self.target.files_eligible_to_restore(self.mock_RollingWindow)]
+        self.verify(o)
+        self.assertEqual([], actual_results)
+
+    def test_partitions_eligible_to_restore_parent_eligible(self):
+        o = dict(database='fake_db', host='fake_host', port='fake_port', dump_directory='fake_dumpdir', pg_path='fake_path')
+        self.mock_RollingWindow.relid = None     # the parent table isn't loaded
+        self.mock_RollingWindow.partitions.return_value.__iter__.return_value = iter([])    # and no partitions.
+        self.runner(o)
+        actual_results = [e for e in self.target.files_eligible_to_restore(self.mock_RollingWindow)]
+        self.verify(o)
+        self.assertEqual([
+                'fake_dumpdir/fake_schema.fake_table.pgdump',
+                'fake_dumpdir/fake_schema.fake_table_0000000000000000000.pgdump',
+                'fake_dumpdir/fake_schema.fake_table_0000000000000000010.pgdump',
+                'fake_dumpdir/fake_schema.fake_table_0000000000000000020.pgdump',
+                'fake_dumpdir/fake_schema.fake_table_0000000000000000030.pgdump',
+                'fake_dumpdir/fake_schema.fake_table_0000000000000000040.pgdump',
+            ], actual_results)    # only parent eligible for load.
+
+    def test_partitions_eligible_to_restore_five_eligible(self):
+        o = dict(database='fake_db', host='fake_host', port='fake_port', dump_directory='fake_dumpdir', pg_path='fake_path')
+        self.mock_listdir.return_value = [
+                'fake_schema.fake_table_0000000000000000050.pgdump',    # already loaded
+                'fake_schema.fake_table_0000000000000000060.pgdump',
+                'fake_schema.fake_table_0000000000000000070.pgdump',
+                'fake_schema.fake_table_0000000000000000080.pgdump',
+                'fake_schema.fake_table_0000000000000000090.pgdump',
+                'fake_schema.fake_table_0000000000000000100.pgdump',    # new
+                'fake_schema.fake_table_0000000000000000110.pgdump',
+                'fake_schema.fake_table_0000000000000000120.pgdump',
+                'fake_schema.fake_table_0000000000000000130.pgdump',
+                'fake_schema.fake_table_0000000000000000140.pgdump',
+            ]
+        self.runner(o)
+        actual_results = [e for e in self.target.files_eligible_to_restore(self.mock_RollingWindow)]
+        self.verify(o)
+        self.assertEqual([
+             'fake_dumpdir/fake_schema.fake_table_0000000000000000100.pgdump',
+             'fake_dumpdir/fake_schema.fake_table_0000000000000000110.pgdump',
+             'fake_dumpdir/fake_schema.fake_table_0000000000000000120.pgdump',
+             'fake_dumpdir/fake_schema.fake_table_0000000000000000130.pgdump',
+             'fake_dumpdir/fake_schema.fake_table_0000000000000000140.pgdump',
+            ], actual_results)
+
+    def test_partitions_eligible_to_restore_not_isfile(self):
+        o = dict(database='fake_db', host='fake_host', port='fake_port', dump_directory='fake_dumpdir', pg_path='fake_path')
+        self.mock_listdir.return_value = [
+                'fake_schema.fake_table_0000000000000000050.pgdump',    # already loaded
+                'fake_schema.fake_table_0000000000000000060.pgdump',
+                'fake_schema.fake_table_0000000000000000070.pgdump',
+                'fake_schema.fake_table_0000000000000000080.pgdump',
+                'fake_schema.fake_table_0000000000000000090.pgdump',
+                'fake_schema.fake_table_0000000000000000100.pgdump',    # new
+                'fake_schema.fake_table_0000000000000000110.pgdump',
+                'fake_schema.fake_table_0000000000000000120.pgdump',
+                'fake_schema.fake_table_0000000000000000130.pgdump',
+                'fake_schema.fake_table_0000000000000000140.pgdump',
+            ]
+        self.mock_isfile.return_value = False
+        self.runner(o)
+        actual_results = [e for e in self.target.files_eligible_to_restore(self.mock_RollingWindow)]
+        self.verify(o)
+        self.assertEqual([], actual_results)

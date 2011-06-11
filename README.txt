@@ -6,12 +6,14 @@ A rolling window table is a table with the following characteristics
 1) Has a FIFO retention policy (first in, first out)
 2) Has a bigint not null column that is (generally) increasing over time,
 which can be used for partitioning.
+TODO: support timestamps for the partitioning column? extract(epoch from ...)
 3) Retention requirements can be defined by a range of values in the partition column.
-(in other words, keep data where partition_column BETWEEN lower_bound AND upper_bound)
+In other words, keep everything where partition_column is greater than x and x is
+a value that increases over time.
 
 Note, this partition column does not need to be unique.
 It could be decreasing rather than increasing, as long as it's consistent.
-Code to support decreasing has yet to be written.
+However, code to support decreasing partition column values has yet to be written.
 Neither does it need to have strong ordering for inserts,
 although be aware that inserts of "old" entries can junk up the parent table,
 if the partition for that old entry has already been dropped.
@@ -21,7 +23,10 @@ their contents, allowing PostgreSQL's constraint based exclusion to speed up
 your queries. Once a partition has been frozen, you may not be able to add
 further data to it (stuff that conflicts with the constraints obviously won't
 be allowed in)... so don't freeze if you expect substantial out of order input.
-Such data will end up in the limbo table. Data in limbo is bad for you, go clean it up.
+Such data will end up in the limbo table.
+Data in limbo is bad for your performance as it can never be CBE excluded.
+It's probably a good idea to go clean it up on a regular basis.
+
 NOTE: The index cloning code is not currently all that smart.
 It will fail on add while attempting to create the limbo partition (or clone indexes to partitions)
 in cases where either the index name, the table name or the column name involved contain
@@ -34,9 +39,11 @@ Or, you could delete stuff older than the oldest partition (this seems reasonabl
 Then for stuff that should belong in other partitions, you can
 
 REQUIREMENTS
-PostgreSQL 9.0 (possibly works with older versions, but not tested)
-Python 2.6 (possibly works with 2.5, but... not tested)
+PostgreSQL 9.0 (probably works with older versions, but not tested)
+Python 2.6 (possibly works with 2.5 or even 2.4, but... not tested)
  - psycopg2
+Python unit testing (developers only)
+ - Mock (http://www.voidspace.org.uk/python/mock/)
 
 INSTALLATION
 psql -f pg_rollingwindow_api.sql
