@@ -36,7 +36,7 @@ Probably not impossible, but certainly not trivial and more work than such a tin
 
 Cleaning up data in limbo can be done a bunch of ways. You could just delete it.
 Or, you could delete stuff older than the oldest partition (this seems reasonable).
-Then for stuff that should belong in other partitions, you can
+Then for stuff that should belong in other partitions, you can move it there manually.
 
 REQUIREMENTS
 PostgreSQL 9.0 (probably works with older versions, but not tested)

@@ -37,18 +37,22 @@ COMMENT ON COLUMN maintained_table.rolled_on
 IS 'when were we last told to maintain this table';
 
 
+
 ---------------------------------------------------------------------
 CREATE TABLE columns_to_freeze (
     relid oid REFERENCES maintained_table(relid) ON DELETE CASCADE,
     column_name name,
+    lower_bound_overlap text,
     PRIMARY KEY (relid, column_name)
 );
 COMMENT ON TABLE columns_to_freeze
-IS '';
+IS 'A list of columns which may be frozen with "bound" constraints.';
 COMMENT ON COLUMN columns_to_freeze.relid
-IS '';
+IS 'The pg_class.oid of the table involved.';
 COMMENT ON COLUMN columns_to_freeze.column_name
-IS '';
+IS 'The pg_attribute.attname of the column to be frozen.';
+COMMENT ON COLUMN maintained_table.lower_bound_overlap
+IS 'when not NULL, what to subtract from the upper bound of the previous partition to generate the lower bound for this column when freezing.';
 
 
 ---------------------------------------------------------------------

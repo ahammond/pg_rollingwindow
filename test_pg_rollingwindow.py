@@ -16,11 +16,20 @@ from subprocess import Popen, call
 import pg_rollingwindow
 import psycopg2
 
-class TestPgConnection(PatchedTestCase): pass
+class OptionBase(PatchedTestCase):
+    def optionize(self, connect_parameters):
+        options = optparse.Values()
+        options.ensure_value('db', 'fake_db')       # mandatory for
+        for k,v in connect_parameters.iteritems():
+            options.ensure_value(k, v)
+        return options
+
+
+class TestPgConnection(OptionBase): pass
 @TestPgConnection.patch('pg_rollingwindow.connect', spec=psycopg2.connect)
 @TestPgConnection.patch('pg_rollingwindow.getLogger', spec=getLogger)
 @TestPgConnection.patch('pg_rollingwindow.open', create=True)
-class TestPgConnection(PatchedTestCase):
+class TestPgConnection(OptionBase):
 
     def postSetUpPreRun(self):
         self.mock_getLogger.return_value = Mock(spec=RootLogger)
@@ -28,10 +37,7 @@ class TestPgConnection(PatchedTestCase):
         self.mock_open.return_value = MagicMock(spec=file)
 
     def runner(self, connect_parameters):
-        options = optparse.Values()
-        for k,v in connect_parameters.iteritems():
-            options.ensure_value(k, v)
-        self.target = pg_rollingwindow.PgConnection(options)
+        self.target = pg_rollingwindow.PgConnection(self.optionize(connect_parameters))
         c = self.target.connection
 
     def verify(self, connect_parameters):
@@ -453,7 +459,7 @@ class TestMaintainedTables(PatchedTestCase):
             table_count += 1
         self.assertEqual(3, table_count)
 
-class TestPartitionDumper(PatchedTestCase):pass
+class TestPartitionDumper(OptionBase):pass
 @TestPartitionDumper.patch('pg_rollingwindow.getLogger', spec=getLogger)
 @TestPartitionDumper.patch('pg_rollingwindow.access', spec=os.access)
 #@TestPartitionDumper.patch('pg_rollingwindow.environ', spec=None)  # TODO: patch_dict?  need to test PGPATH stuff.
@@ -463,7 +469,7 @@ class TestPartitionDumper(PatchedTestCase):pass
 @TestPartitionDumper.patch('pg_rollingwindow.isdir', spec=os.path.isdir)
 @TestPartitionDumper.patch('pg_rollingwindow.isfile', spec=os.path.isfile)
 @TestPartitionDumper.patch('pg_rollingwindow.call', spec=call)
-class TestPartitionDumper(PatchedTestCase):
+class TestPartitionDumper(OptionBase):
     maxDiff = None
 
     def postSetUpPreRun(self):
@@ -505,13 +511,6 @@ class TestPartitionDumper(PatchedTestCase):
         self.mock_isdir.return_value = True
         self.mock_isfile.return_value = True
         self.mock_call.return_value = 0
-
-    def optionize(self, connect_parameters):
-        options = optparse.Values()
-        options.ensure_value('db', 'fake_db')       # mandatory for
-        for k,v in connect_parameters.iteritems():
-            options.ensure_value(k, v)
-        return options
 
     def runner(self, connect_parameters, ):
         self.target = pg_rollingwindow.PartitionDumper(self.optionize(connect_parameters))
@@ -911,3 +910,24 @@ class TestPartitionDumper(PatchedTestCase):
         actual_results = [e for e in self.target.files_eligible_to_restore(self.mock_RollingWindow)]
         self.verify(o)
         self.assertEqual([], actual_results)
+
+
+class TestSchemaInitializer(OptionBase):pass
+@TestSchemaInitializer.patch('pg_rollingwindow.getLogger', spec=getLogger)
+@TestSchemaInitializer.patch('pg_rollingwindow.path_split', spec=os.path.split)
+@TestSchemaInitializer.patch('pg_rollingwindow.call', spec=call)
+class TestSchemaInitializer(OptionBase):
+    maxDiff = None
+
+    def postSetUpPreRun(self):
+        self.mock_path_split.return_value = ('fake_head', 'fake_tail')
+        self.mock_call.return_value = 0
+
+    def test_go_right(self):
+        target = pg_rollingwindow.SchemaInitializer(self.optionize({}))
+        target.initialize_schema()
+
+        self.assertEqual(
+            [((['psql', '--file=fake_head/pg_rollingwindow_api.sql'],), {})],
+            self.mock_call.call_args_list
+        )

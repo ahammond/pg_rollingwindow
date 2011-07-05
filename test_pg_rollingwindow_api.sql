@@ -13,6 +13,20 @@ INSERT INTO foo(name) SELECT a FROM generate_series(1, 99) AS s(a) ;
 INSERT INTO foo(name) SELECT a FROM generate_series(1, 99) AS s(a) ;
 INSERT INTO foo(name) SELECT a FROM generate_series(1, 99) AS s(a) ;
 
+CREATE SCHEMA bar ;
+SET search_path TO bar ;
+
+CREATE TABLE baz (
+    id serial primary key,
+    name bigint not null,
+    ts timestamptz not null default now(),
+    rnd bigint not null default (floor(random() * 9223372036854775807))
+) ;
+
+INSERT INTO baz(name) SELECT a FROM generate_series(1, 99) AS s(a) ;
+INSERT INTO baz(name) SELECT a FROM generate_series(1, 99) AS s(a) ;
+INSERT INTO baz(name) SELECT a FROM generate_series(1, 99) AS s(a) ;
+
 DROP SCHEMA rollingwindow CASCADE ;
 
 \i ./pg_rollingwindow_api.sql

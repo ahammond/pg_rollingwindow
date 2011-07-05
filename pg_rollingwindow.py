@@ -5,7 +5,8 @@ from optparse import OptionParser, OptionGroup, Values
 from os import access, environ, listdir, rename, R_OK, W_OK
 from os.path import exists, isdir, isfile
 from os.path import join as path_join
-from psycopg2 import connect, IntegrityError
+from os.path import split as path_split
+from psycopg2 import connect, IntegrityError, ProgrammingError
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT, ISOLATION_LEVEL_READ_COMMITTED
 import re
 from subprocess import Popen, call
@@ -58,14 +59,8 @@ class PgConnection(object):
 
 
 ##########################################################################
-class PartitionDumper(object):
-
+class PgToolCaller(object):
     legal_pg_arguments = ('username', 'host', 'port', 'sslmode' )   # database parameter is handled specially because of pg_dump
-    standard_pg_dump_arguments = ['--format=custom', '--compress=9', '--no-password']
-    standard_pg_restore_arguments = ['--format=custom', '--jobs=4', '--no-password', '--exit-on-error' ]
-    # TODO: handle passwords? This would involve talking to pg_dump after it's been started.
-    # That's a little more complicated... next revision.
-    # For now require an appropriate pg_hba.conf or .pgpass entries.
 
     def __init__(self, options, connection=None):
         '''Create a partition dumper helper object.
@@ -84,10 +79,6 @@ class PartitionDumper(object):
         else:
             self.db = options.db
 
-        if 'dump_directory' not in dir(options):
-            raise UsageError('Dumpers must be instantiated with a dump_directory option')
-        self.dump_directory = options.dump_directory
-
         self.pg_path = None
         if 'PGPATH' in environ:
             self.pg_path = environ['PGPATH']
@@ -104,6 +95,54 @@ class PartitionDumper(object):
                 v = eval('options.%s' % k)
                 if v is not None:
                     self.database_connection_arguments.append('--%s=%s' % (k,v))
+
+    def get_binary_path(self, binary):
+        return binary if self.pg_path is None else path_join(self.pg_path, binary)
+
+
+##########################################################################
+class SchemaInitializer(PgToolCaller):
+
+    def initialize_schema(self):
+        """Load the rolling_window schema, tables and supporting functions from pg_rollingwindow_api.sql
+
+        Calls psql to import the pg_rollingwindow_api.sql file.
+        Assumes that pg_rollingwindow_api.sql is in the same directory that this file is in.
+        """
+
+        l = getLogger('SchemaInitializer.initialize_schema')
+
+        directory = path_split(__file__)[0]
+        pg_rollingwindow_api_full_path = path_join(directory, 'pg_rollingwindow_api.sql')
+
+        load_command = []
+        load_command.append(self.get_binary_path('psql'))
+        load_command.extend(self.database_connection_arguments)
+        load_command.append('--file=%s' % pg_rollingwindow_api_full_path)
+        if self.database is not None:
+            load_command.append(self.database)
+
+        l.debug('load_command = %r', load_command)
+        return_code = call(load_command)
+        if return_code != 0:
+            raise RuntimeError('psql failed!')
+
+
+##########################################################################
+class PartitionDumper(PgToolCaller):
+
+    standard_pg_dump_arguments = ['--format=custom', '--compress=9', '--no-password']
+    standard_pg_restore_arguments = ['--format=custom', '--jobs=4', '--no-password', '--exit-on-error' ]
+    # TODO: handle passwords? This would involve talking to pg_dump after it's been started.
+    # That's a little more complicated... next revision.
+    # For now require an appropriate pg_hba.conf or .pgpass entries.
+
+    def __init__(self, options, connection=None):
+        if 'dump_directory' not in dir(options):
+            raise UsageError('Dumpers must be instantiated with a dump_directory option')
+        self.dump_directory = options.dump_directory
+        super(PartitionDumper, self).__init__(options, connection)
+
 
     def validate_dump_directory(self, write_access=False):
         l = getLogger('PartitionDumper.validate_dump_directory')
@@ -141,7 +180,7 @@ class PartitionDumper(object):
         #TODO: add pipes to both stdout and stderr and capture for l.debug() / cleanlieness???
 
         dump_command = []
-        dump_command.append('pg_dump' if self.pg_path is None else path_join(self.pg_path, 'pg_dump'))
+        dump_command.append(self.get_binary_path('pg_dump'))
         dump_command.extend(self.database_connection_arguments)
         dump_command.extend(self.standard_pg_dump_arguments)
         dump_command.append('--file=%s' % (partial_dump_file,))
@@ -151,7 +190,7 @@ class PartitionDumper(object):
         if self.database is not None:
             dump_command.append(self.database)
 
-        l.debug('dump_command = %s', dump_command)
+        l.debug('dump_command = %r', dump_command)
         return_code = call(dump_command)
         if return_code != 0:
             raise RuntimeError('pg_dump failed!')   # uh, is this a reasonable exception to use?
@@ -223,21 +262,22 @@ class PartitionDumper(object):
                 # I think the solution will involve parallel pg_dump, which should be in pg 9.2. So, hold off until then.
 
     def restore_file(self, r, filename):
+        #TODO: need to restore schemas for tables restoring to a schema that doesn't already exist
         l = getLogger('PartitionDumper.restore_file')
         self.validate_dump_directory()
         l.debug('Restoring %s.%s from %s', r.schema, r.table, filename)
         restore_command = []
-        restore_command.append('pg_restore' if self.pg_path is None else path_join(self.pg_path, 'pg_restore'))
+        restore_command.append(self.get_binary_path('pg_restore'))
         restore_command.extend(self.database_connection_arguments)
         restore_command.extend(self.standard_pg_restore_arguments)
-        #restore_command.extend(['--schema=%s' ,'--table=%s'])      # seems pointless to limit this...
+#        restore_command.extend(['--schema=%s' % r.schema ,'--table=%s' % r.table])      # it seems pointless to limit this. Why would random stuff be in the restore file?
         if self.database is not None:
             restore_command.append('--dbname=%s' % self.database)
         else:
             l.warning('No database specified. Restore does not default to PGDATABASE. Piping to STDOUT.')
         restore_command.append(filename)    # filename must be the last argument.
 
-        l.debug('restore_command = %s', restore_command)
+        l.debug('restore_command = %r', restore_command)
         return_code = call(restore_command)
         if return_code != 0:
             raise RuntimeError('pg_restore failed!')
@@ -371,7 +411,14 @@ class RollingWindow(object):
         l = getLogger('RollingWindow.fetch')
         l.debug('fetching %s.%s', self.schema, self.table)
         cursor = self.db.connection.cursor()
-        cursor.execute('SET search_path TO %(schema)s', {'schema': self.schema})
+        try:
+            cursor.execute('SET search_path TO %(schema)s', {'schema': self.schema})
+        except ProgrammingError as e:
+            if e.pgcode == '3F000' :    # schema does not exist
+                self._is_managed = False
+                return
+            else:
+                raise
         cursor.execute("""
 SELECT m.relid, m.attname, m.step,
     m.non_empty_partitions_to_keep,
@@ -766,7 +813,17 @@ ORDER BY 1, 2
 ##########################################################################
 
 ##########################################################################
+def init(options):
+    """Initialize database with pg_rollingwindow_api.sql
+    """
+    l = getLogger('init')
+    i = SchemaInitializer(options)
+    i.initialize_schema()
+
+##########################################################################
 def add(options):
+    """Add a table for management under RollingWindow code.
+    """
     l = getLogger('add')
     l.debug('adding')
     missing_a_parameter = False
@@ -794,6 +851,8 @@ def add(options):
 
 ##########################################################################
 def roll(options):
+    """Roll a table, or all tables under management.
+    """
     l = getLogger('roll')
     l.debug('rolling')
     if options.table is not None:   # I'm rolling a single table
@@ -808,20 +867,18 @@ def roll(options):
             t.roll()
 
 ##########################################################################
-def bytes_to_human(bytes):
-    try:
-        bytes = float(bytes)
-        prefixes = ['B', 'kB', 'MB', 'GB', 'TB', 'PB']
-        while (bytes / 1024) > 1:
-            bytes /= 1024
-            prefixes.pop(0)
-        return '%.1f %s' % (bytes, prefixes.pop(0))
-    except TypeError:
-        return bytes
-
-##########################################################################
 def list_table(db, schema, table, verbosity):
-    #TODO: list in order by partition name.
+    def bytes_to_human(bytes):
+        try:
+            bytes = float(bytes)
+            prefixes = ['B', 'kB', 'MB', 'GB', 'TB', 'PB']
+            while (bytes / 1024) > 1:
+                bytes /= 1024
+                prefixes.pop(0)
+            return '%.1f %s' % (bytes, prefixes.pop(0))
+        except TypeError:
+            return bytes
+
     l = getLogger('list_table')
     t = RollingWindow(db, schema, table)
     print 'Table %s.%s %s with about %d rows last rolled %s' % ( schema, table, bytes_to_human(t.parent_total_relation_size_in_bytes), t.parent_estimated_rows, t.rolled_on )
@@ -849,7 +906,6 @@ def list(options):
 
 ##########################################################################
 def freeze_table(db, schema, table):
-    raise NotImplementedError('WRITEME')
     l = getLogger('freeze_table')
     l.debug('Freezing %s.%s', schema, table)
     t = RollingWindow(db, schema, table)
@@ -861,7 +917,6 @@ def freeze_table(db, schema, table):
 
 ##########################################################################
 def freeze(options):
-    raise NotImplementedError('WRITEME')
     l = getLogger('freeze')
     l.debug('Freezing')
     if options.table is not None:   # I'm rolling a single table
@@ -917,11 +972,8 @@ def restore(options):
             restore_table(r, dumper)
 
 ##########################################################################
-def init(options):
-    """Initialize database with pg_rollingwindow_api.sql
-
-    """
-    l = getLogger('init')
+def cleanup(options):
+    l = getLogger('cleanup')
     raise NotImplementedError('WRITEME')
 
 ##########################################################################
@@ -934,6 +986,7 @@ actions = {
     'freeze': freeze,
     'dump': dump,
     'restore': restore,
+    'cleanup': cleanup,
 }
 
 def main():
@@ -947,8 +1000,12 @@ Adds table to the rolling window system for maintenance.
 Roll the table (or all maintained tables if no table parameter):
     roll [-t <table>] [<PostgreSQL options>]
 
-Freeze all but the highest non-empty partition for the table (or all maintained tables if no table parameter):
+Freeze all eligible partitions for the table (or all maintained tables if no table parameter):
     freeze [-t <table>] [<PostgreSQL options>]
+
+Cleanup and (re-)freeze all eligible partitions for the table (or all maintained tables if no table parameter).
+If a freeze_column and lower_bound_overlap are provided, apply that offset to the table.freeze_column.
+    cleanup [-t <table> [-f <freeze_column> [--lower_bound_overlap]]]
 
 Dump all frozen / freezable partitions which have not yet been dumped:
     dump --dump_directory=/path/to/dir
@@ -983,6 +1040,8 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
         help='target number of empty reserve partitions to keep ahead of the window')
     parser.add_option('-f', '--freeze_columns', action='append', default=[],
         help='columns to be constrained when partitions are frozen')
+    parser.add_option('--lower_bound_overlap', action='append', default=[],
+        help='what to subtract from the upper bound of the previous partition to generate the new lower bound for this partition for the associated column')
     parser.add_option('-l', '--data_lag_window', default=0,
         help='partitions following the highest partition with data to hold back from freezing / dumping')
     parser.add_option('--pg_path',
@@ -1000,7 +1059,7 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
     postgres_group.add_option('-U', '--username',
         help='Connect to the database as the user username instead of the default. (You must have permission to do so, of course.)')
     postgres_group.add_option('-w', '--no-password', dest='password_prompt', action='store_false',
-        help='Never issue a password prompt. NOT SUPPORTED.')
+        help='Never issue a password prompt. IMPLICIT (use .pgpass or pg_hba).')
     postgres_group.add_option('-W', '--password', dest='password_prompt', action='store_true',
         help='Force prompt for a password. NOT SUPPORTED.')
     parser.add_option_group(postgres_group)
