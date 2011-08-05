@@ -1030,13 +1030,13 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
         help='required for add: act on this particular table')
     parser.add_option('-n', '--schema', default='public',
         help='... in this particular schema, defaulting to public')
-    parser.add_option('-c', '--partition_column', dest='partition_column',
+    parser.add_option('-c', '--partition_column',
         help='column to use as a partition key, required')
     parser.add_option('-s', '--step',
         help='partition width in terms of the partition column (lower_bound + step - 1 = upper_bound)')
     parser.add_option('-r', '--partition_retention', dest='partition_retention',
         help='target number of non-empty partitions to keep around, the width of the window')
-    parser.add_option('-a', '--partition_ahead', dest='partition_ahead',
+    parser.add_option('-a', '--partition_ahead',
         help='target number of empty reserve partitions to keep ahead of the window')
     parser.add_option('-f', '--freeze_columns', action='append', default=[],
         help='columns to be constrained when partitions are frozen')

@@ -51,7 +51,7 @@ COMMENT ON COLUMN columns_to_freeze.relid
 IS 'The pg_class.oid of the table involved.';
 COMMENT ON COLUMN columns_to_freeze.column_name
 IS 'The pg_attribute.attname of the column to be frozen.';
-COMMENT ON COLUMN maintained_table.lower_bound_overlap
+COMMENT ON COLUMN columns_to_freeze.lower_bound_overlap
 IS 'when not NULL, what to subtract from the upper bound of the previous partition to generate the lower bound for this column when freezing.';
 
 
@@ -141,9 +141,9 @@ BEGIN
     END IF;
     child := rolling_window.child_name(parent, lower_bound);
     upper_bound := lower_bound + step - 1;
-    create_str := 'CREATE TABLE ' || quote_ident(child)
+    create_str := 'CREATE TABLE ' || quote_ident(parent_namespace) || '.' || quote_ident(child)
         || ' ( CHECK ( '|| quote_ident(attname)|| ' BETWEEN '|| lower_bound || ' AND '|| upper_bound || ' ) ) '
-        || 'INHERITS ( ' || quote_ident(parent) || ' )';
+        || 'INHERITS ( ' || quote_ident(parent_namespace) || '.' || quote_ident(parent) || ' )';
     EXECUTE create_str;
     RETURN child;
 END;
