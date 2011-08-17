@@ -769,8 +769,9 @@ RETURNING relid,
         if not self.is_managed:
             raise UsageError('Can not freeze partitions of a table that is not managed.')
         cursor = self.db.connection.cursor()
+        parameters = {'schema': self.schema, 'table': self.table}
         cursor.execute('SELECT partition_table_name, new_constraint FROM rolling_window.freeze(%(schema)s, %(table)s)',
-            {'schema': self.schema, 'table': self.table})
+                       parameters)
         for r in cursor.fetchall():
             p = self.FrozenPartition(r[0], r[1])
             l.debug('Partition %s added constraints %s', p.partition_table_name, p.new_constraint)
