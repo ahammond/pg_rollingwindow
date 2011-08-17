@@ -313,7 +313,7 @@ CREATE OR REPLACE FUNCTION clone_indexes_to_partition(
     parent_namespace name,
     parent name,
     lower_bound bigint
-) RETURNS void AS $definition$
+) RETURNS SETOF TEXT AS $definition$
 DECLARE
     child name;
     index_oid oid;
@@ -347,8 +347,11 @@ BEGIN
         index_name_str := 'idx_' || child || '_' || column_name_str;
         create_index_str := 'CREATE INDEX ' || quote_ident(index_name_str)
             || ' ON ' || quote_ident(child)
-            || ' USING ' || suffix_str;
+            || ' USING ' || suffix_str
+            || ' WITH (fillfactor = 100)';
+        -- TODO: what about when the suffix already has a WITH ...?
         EXECUTE create_index_str;
+        RETURN NEXT create_index_str;
     END LOOP;
 END;
 $definition$ LANGUAGE plpgsql;
@@ -373,6 +376,12 @@ DECLARE
     insert_count bigint;
     delete_str text;
     delete_count bigint;
+    index_str text;
+    best_index_name name;
+    index_name name;
+    best_index_position bigint;
+    index_position bigint;
+    alter_str text;
 BEGIN
     SELECT m.attname, m.step
         INTO STRICT attname, step
@@ -406,7 +415,48 @@ BEGIN
     END IF;
     IF clone_indexes
     THEN
-        PERFORM rolling_window.clone_indexes_to_partition(parent_namespace, parent, lower_bound);
+        FOR index_str IN
+            SELECT r.a
+            FROM rolling_window.clone_indexes_to_partition(parent_namespace, parent, lower_bound) AS r(a)
+        LOOP
+            -- Chomp off 'CREATE INDEX ' = 13 characters
+            index_str := substring(index_str from 14);
+            index_name := substring(index_str from 0 for position(' ON ' in index_str));
+            -- Chomp off everything up to the column list. ' USING (' = 8 characters
+            index_str := substring(index_str from position(' USING (' in index_str) + 8);
+            index_position := position(attname IN index_str);
+
+
+            -- if we don't have an index, so take the first we get
+            IF best_index_name IS NULL
+            THEN
+                best_index_name := index_name;
+            END IF;
+
+            -- indexes which mention our partitioning column are better.
+            IF 0 <= index_position
+            THEN
+                IF best_index_position IS NULL
+                THEN
+                    best_index_name := index_name;
+                    best_index_position := index_position;
+                ELSE
+                    -- prefer indexes where the partitioning column comes first.
+                    IF index_position < best_index_position
+                    THEN
+                        best_index_name := index_name;
+                        best_index_position := index_position;
+                    END IF;
+                END IF;
+            END IF;
+        END LOOP;
+
+        IF best_index_name IS NOT NULL
+        THEN
+            alter_str := 'ALTER TABLE ' || quote_ident(parent_namespace) || '.' || quote_ident(child)
+                || ' CLUSTER ON ' || quote_ident(best_index_name);
+            EXECUTE alter_str;
+        END IF;
     END IF;
     RETURN delete_count;
 END;

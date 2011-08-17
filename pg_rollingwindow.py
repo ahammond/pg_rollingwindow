@@ -759,9 +759,11 @@ RETURNING relid,
         r = cursor.fetchone()
         return r[0]
 
-    def freeze(self):
+    def freeze(self, cluster=False):
         """For all but the highest non-empty partition, add a min/max bound constraint for each freeze_column.
 
+        Clustering is optional and defaults to off as it's expensive.
+        If used, should minimize disk space usage and speed up sequential scans, etc.
         Min and Max values are determined by scanning the table at freeze time.
         """
         l = getLogger('RollingWindow.freeze')
@@ -776,6 +778,9 @@ RETURNING relid,
             p = self.FrozenPartition(r[0], r[1])
             l.debug('Partition %s added constraints %s', p.partition_table_name, p.new_constraint)
             yield p
+        if cluster:
+            l.debug('Clustering %s.%s', self.schema, self.table)
+            cursor.execute('CLUSTER %(schema)s.%(table)s' % parameters)
 
     def update_insert_rule(self):
         raise NotImplementedError('Management of insert rules on the parent is not implemented, yet. Wanna write it?')
@@ -906,14 +911,14 @@ def list(options):
             list_table(options.db, managed_table[0], managed_table[1], options.verbosity)
 
 ##########################################################################
-def freeze_table(db, schema, table):
+def freeze_table(db, schema, table, cluster):
     l = getLogger('freeze_table')
     l.debug('Freezing %s.%s', schema, table)
     t = RollingWindow(db, schema, table)
     if not t.is_managed:
         l.error('%s.%s is not managed. Stopping.', schema, table)
         return
-    for f in t.freeze():
+    for f in t.freeze(cluster):
         print 'Partition %s.%s added %s' % (schema, f.partition_table_name, f.new_constraint)
 
 ##########################################################################
@@ -921,7 +926,7 @@ def freeze(options):
     l = getLogger('freeze')
     l.debug('Freezing')
     if options.table is not None:   # I'm rolling a single table
-        freeze_table(options.db, options.schema, options.table)
+        freeze_table(options.db, options.schema, options.table, options.cluster)
     else:
         l.debug('No table specified. Freeze them all.')
         m = MaintainedTables(options.db)
@@ -1002,11 +1007,13 @@ Roll the table (or all maintained tables if no table parameter):
     roll [-t <table>] [<PostgreSQL options>]
 
 Freeze all eligible partitions for the table (or all maintained tables if no table parameter):
-    freeze [-t <table>] [<PostgreSQL options>]
+Specifying the --cluster parameter will cause the table to be clustered after freezing.
+    freeze [-t <table>] [--cluster] [<PostgreSQL options>]
 
 Cleanup and (re-)freeze all eligible partitions for the table (or all maintained tables if no table parameter).
-If a freeze_column and lower_bound_overlap are provided, apply that offset to the table.freeze_column.
-    cleanup [-t <table> [-f <freeze_column> [--lower_bound_overlap]]]
+If a freeze_column and lower_bound_overlap are provided, apply that offset to the table.freeze_column,
+moving data that is out of bounds into the limbo table.
+    cleanup [-t <table> [-f <freeze_column> [--lower_bound_overlap <overlap>]]] [<PostgreSQL options>]
 
 Dump all frozen / freezable partitions which have not yet been dumped:
     dump --dump_directory=/path/to/dir
@@ -1041,7 +1048,9 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
         help='target number of empty reserve partitions to keep ahead of the window')
     parser.add_option('-f', '--freeze_columns', action='append', default=[],
         help='columns to be constrained when partitions are frozen')
-    parser.add_option('--lower_bound_overlap', action='append', default=[],
+    parser.add_option('--cluster', action='store_true', default=False,
+        help='cluster partitions when freezing them')
+    parser.add_option('--lower_bound_overlap',
         help='what to subtract from the upper bound of the previous partition to generate the new lower bound for this partition for the associated column')
     parser.add_option('-l', '--data_lag_window', default=0,
         help='partitions following the highest partition with data to hold back from freezing / dumping')
