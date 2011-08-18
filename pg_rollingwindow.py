@@ -596,7 +596,7 @@ RETURNING relid,
             self.partition_name = partition_name
             self.rows_moved = rows_moved
 
-    def partition(self, clone_indexes=True):
+    def partition(self, clone_indexes=True, vacuum_parent_after_every_move=False):
         """Partition this table by creating partitions to cover the entire span of data in the table and then moving data into the partitions.
 
         Parititon tables are created covering the lowest to highest existing data.
@@ -619,6 +619,10 @@ RETURNING relid,
                             'clone_indexes': clone_indexes, 'to_limbo': False})
             rows_moved = cursor.fetchone()[0]
             l.info('Created partition %s and moved %s rows.', partition_created, rows_moved)
+            if vacuum_parent_after_every_move:
+                parameters = {'schema': self.schema, 'table': self.table}
+                l.debug('Running VACUUM FULL on %(schema)s.%(table)s' % parameters)
+                cursor.execute('VACUUM FULL %(schema)s.%(table)s' % parameters)     # Is there a polite way to get these identifiers quoted?
             yield self.PartitionResult(self.CREATED, partition_created, rows_moved)
         # Handle any data left lurking in the parent table.
         cursor.execute('SELECT min_value, max_value, step FROM rolling_window.min_max_in_parent_only(%(schema)s, %(table)s)',
@@ -646,9 +650,13 @@ RETURNING relid,
                          'clone_indexes': False, 'to_limbo': True})
                     rows_moved = cursor.fetchone()[0]
                     l.info('Moved %s rows to %s.%s_limbo', rows_moved, self.schema, self.table)
+                if vacuum_parent_after_every_move:
+                    parameters = {'schema': self.schema, 'table': self.table}
+                    l.debug('Running VACUUM FULL on %(schema)s.%(table)s' % parameters)
+                    cursor.execute('VACUUM FULL %(schema)s.%(table)s' % parameters)
                 yield self.PartitionResult(self.MOVED, partition, rows_moved)
 
-    def roll(self):
+    def roll(self, vacuum_parent_after_every_move=False):
         """Perform standard maintenance on a maintained table.
 
         Move any data in the parent table to the appropriate partition, creating partitions as necessary.
@@ -661,7 +669,7 @@ RETURNING relid,
         if not self.is_managed:
             raise UsageError('Can not partition a table that is not managed.')
         partitions_created, rows_to_created_partitions, partition_only_moved_to, rows_to_existing_partitions = [0] * 4
-        for x in self.partition():
+        for x in self.partition(vacuum_parent_after_every_move=vacuum_parent_after_every_move):
             if x.method == self.CREATED:
                 partitions_created += 1
                 rows_to_created_partitions += x.rows_moved
@@ -865,12 +873,12 @@ def roll(options):
         t = RollingWindow(options.db, options.schema, options.table)
         if not t.is_managed:
             l.error('%s.%s is not managed. Stopping.', options.schema, options.table)
-        t.roll()
+        t.roll(options.vacuum_parent_after_every_move)
     else:   # I'm rolling all the tables under management.
         m = MaintainedTables(options.db)
         for managed_table in m:
             t = RollingWindow(options.db, managed_table[0], managed_table[1])
-            t.roll()
+            t.roll(vacuum_parent_after_every_move=options.vacuum_parent_after_every_move)
 
 ##########################################################################
 def list_table(db, schema, table, verbosity):
@@ -1004,7 +1012,8 @@ Adds table to the rolling window system for maintenance.
     add -t <table> -c <partition_column> -s <step> -r <retention> -a <advanced> [-f <freeze column> [-f ...]] [<PostgreSQL options>]
 
 Roll the table (or all maintained tables if no table parameter):
-    roll [-t <table>] [<PostgreSQL options>]
+Specifying the --vacuum_parent_after_every_move may help for initial rolls on systems with low disk.
+    roll [-t <table>] [--vacuum_parent_after_every_move] [<PostgreSQL options>]
 
 Freeze all eligible partitions for the table (or all maintained tables if no table parameter):
 Specifying the --cluster parameter will cause the table to be clustered after freezing.
@@ -1054,6 +1063,8 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
         help='what to subtract from the upper bound of the previous partition to generate the new lower bound for this partition for the associated column')
     parser.add_option('-l', '--data_lag_window', default=0,
         help='partitions following the highest partition with data to hold back from freezing / dumping')
+    parser.add_option('--vacuum_parent_after_every_move', action='store_true', default=False,
+        help='when rolling data to partitions, VACUUM FULL the parent table after moving each partition. Super slow, but reclaims disk space. Not particularly useful except when rolling a lot of data out of the parent table.')
     parser.add_option('--pg_path',
         help='path for pg_dump and psql, default searchs system path')
     parser.add_option('--dump_directory',
