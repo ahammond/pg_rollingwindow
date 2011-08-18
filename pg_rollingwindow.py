@@ -841,7 +841,7 @@ def add(options):
     l = getLogger('add')
     l.debug('adding')
     missing_a_parameter = False
-    for p in ['table', 'partition_column', 'step', 'partition_retention', 'partition_ahead']:
+    for p in ['table', 'column', 'step', 'partition_retention', 'partition_ahead']:
         if p not in dir(options):
             l.error('Required parameter for add action is missing: %s', p)
             missing_a_parameter = True
@@ -856,7 +856,7 @@ def add(options):
     t = RollingWindow(options.db, options.schema, options.table)
     if t.is_managed:
         l.error('%s.%s is already managed. Stopping.', options.schema, options.table)
-    t.add(options.partition_column,
+    t.add(options.column,
           options.step,
           options.partition_retention,
           options.partition_ahead,
@@ -1009,7 +1009,7 @@ List tables under management (or details about a specific table with the table p
     list [-t <table>] [<PostgreSQL options>]
 
 Adds table to the rolling window system for maintenance.
-    add -t <table> -c <partition_column> -s <step> -r <retention> -a <advanced> [-f <freeze column> [-f ...]] [<PostgreSQL options>]
+    add -t <table> -c <column> -s <step> -r <retention> -a <advanced> [-f <freeze column> [-f ...]] [<PostgreSQL options>]
 
 Roll the table (or all maintained tables if no table parameter):
 Specifying the --vacuum_parent_after_every_move may help for initial rolls on systems with low disk.
@@ -1047,7 +1047,7 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
         help='required for add: act on this particular table')
     parser.add_option('-n', '--schema', default='public',
         help='... in this particular schema, defaulting to public')
-    parser.add_option('-c', '--partition_column',
+    parser.add_option('-c', '--column',
         help='column to use as a partition key, required')
     parser.add_option('-s', '--step',
         help='partition width in terms of the partition column (lower_bound + step - 1 = upper_bound)')
@@ -1055,14 +1055,12 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
         help='target number of non-empty partitions to keep around, the width of the window')
     parser.add_option('-a', '--partition_ahead',
         help='target number of empty reserve partitions to keep ahead of the window')
-    parser.add_option('-f', '--freeze_columns', action='append', default=[],
-        help='columns to be constrained when partitions are frozen')
+    parser.add_option('-l', '--data_lag_window', default=0,
+        help='partitions following the highest partition with data to hold back from freezing / dumping')
     parser.add_option('--cluster', action='store_true', default=False,
         help='cluster partitions when freezing them')
     parser.add_option('--lower_bound_overlap',
         help='what to subtract from the upper bound of the previous partition to generate the new lower bound for this partition for the associated column')
-    parser.add_option('-l', '--data_lag_window', default=0,
-        help='partitions following the highest partition with data to hold back from freezing / dumping')
     parser.add_option('--vacuum_parent_after_every_move', action='store_true', default=False,
         help='when rolling data to partitions, VACUUM FULL the parent table after moving each partition. Super slow, but reclaims disk space. Not particularly useful except when rolling a lot of data out of the parent table.')
     parser.add_option('--pg_path',
