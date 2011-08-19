@@ -686,6 +686,93 @@ IS 'Remove any partitions which extend beyond retention policy as defined by mai
 
 
 ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION clean_partition(
+    parent_namespace name,
+    parent name,
+    lower_bound bigint
+) RETURNS bigint AS $definition$
+DECLARE
+    child_name name;
+    previous_child_name name;
+    step bigint;
+    column_name name;
+    lower_bound_overlap text;
+    child_relid oid;
+    previous_child_relid oid;
+    previous_child_constraint_oid oid;
+    previous_child_constraint text;
+    previous_child_upper_bound text;
+    where_clause text;
+    insert_str text;
+    delete_str text;
+BEGIN
+    SELECT m.step
+        INTO STRICT step
+        FROM rolling_window.maintained_table m
+        INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
+        INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
+        WHERE c.relname = parent
+        AND n.nspname = parent_namespace;
+    IF step IS NULL
+    THEN
+        RAISE EXCEPTION 'table not found in rolling_window.maintained_table';
+    END IF;
+
+    child_name := rolling_window.child_name(parent, lower_bound);
+    previous_child_name := rolling_window.child_name(parent, lower_bound - step);
+
+    SELECT c.oid
+        INTO STRICT child_relid
+        FROM pg_catalog.pg_class c
+        INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
+        WHERE c.relname = child_name
+        AND n.nspname = parent_namespace;
+
+    SELECT c.oid
+        INTO STRICT previous_child_relid
+        FROM pg_catalog.pg_class c
+        INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
+        WHERE c.relname = previous_child_name
+        AND n.nspname = parent_namespace;
+    IF previous_child_relid IS NULL
+    THEN    -- can't limit lower-bound without previous_child having an appropriate boundary.
+        RETURN 0;
+    END IF;
+
+    -- assemble a WHERE clause
+    FOR column_name, lower_bound_overlap IN
+        SELECT ctf.column_name, ctf.lower_bound_overlap
+        FROM rolling_window.columns_to_freeze ctf
+        WHERE ctf.relid = child_relid AND ctf.lower_bound_overlap IS NOT NULL
+    LOOP
+        SELECT c.oid
+            INTO STRICT previous_child_constraint_oid
+            FROM pg_constraint c
+            WHERE c.conname = 'bound_' || column_name
+              AND c.conrelid = previous_child_relid;
+        CONTINUE WHEN previous_child_constraint_oid IS NULL;
+        previous_child_constraint := pg_get_constraintdef(previous_child_constraint_oid);
+        -- CHECK (((rnd >= 408477340042002432::bigint) AND (rnd <= 9006287493313593344::bigint)))
+        -- CHECK (((ts >= '2011-07-05 15:06:57.343784-07'::timestamp with time zone) AND (ts <= '2011-07-05 15:06:57.348651-07'::timestamp with time zone)))
+        -- look for '<= ' and then take everything up to the first ')'
+        previous_child_upper_bound := substring(previous_child_constraint from position(' <= ' in previous_child_constraint));
+        previous_child_upper_bound := substring(previous_child_upper_bound from 1 for position(')' in previous_child_upper_bound) - 1);
+        RAISE NOTICE 'pcub: %', previous_child_upper_bound;
+
+        -- TODO: add test data with lower_bound_overlap not null.
+
+    END LOOP;
+    -- insert out-of-bounds data into limbo table
+    -- delete from child table
+    -- drop associated bound constraints if any, for re-building.
+    RETURN 0;
+END;
+$definition$ LANGUAGE plpgsql;
+COMMENT ON FUNCTION clean_partition(name, name, bigint)
+IS 'Find the upper and lower bound for the constrained_column in the partition and add that as a table constraint.';
+
+
+---------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION constrain_partition(
     parent_namespace name,
     parent name,
@@ -836,24 +923,33 @@ CREATE OR REPLACE FUNCTION freeze(
 ) RETURNS SETOF freeze_result AS $definition$
 DECLARE
     highest_freezable name;
+    child_relid oid;
     child_name name;
     new_constraint name;
     f_result rolling_window.freeze_result;
+    lower_bound bigint;
 BEGIN
     highest_freezable := rolling_window.highest_freezable(parent_namespace, parent);
-    FOR child_name IN
-        SELECT p.relname
+    FOR child_relid, child_name IN
+        SELECT p.relid, p.relname
         FROM rolling_window.list_partitions(parent_namespace, parent) AS p
         WHERE p.relname ~ (parent || E'_\\d+$')
           AND p.relname <= highest_freezable
         ORDER BY p.relname
     LOOP
+        lower_bound := rolling_window.lower_bound_from_child_name(child_name);
+        -- Clean up naughty overlaps.
+        SELECT 1 FROM rolling_window.columns_to_freeze WHERE relid = child_relid AND lower_bound_overlap IS NOT NULL;
+        IF found
+        THEN
+            PERFORM rolling_window.clean_partition(parent_namespace, parent, lower_bound);
+        END IF;
         FOR new_constraint IN
             SELECT f.p
             FROM rolling_window.freeze_partition(
                 parent_namespace,
                 parent,
-                rolling_window.lower_bound_from_child_name(child_name))
+                lower_bound)
             AS f(p)
         LOOP
             f_result = ROW(child_name, new_constraint);
@@ -864,3 +960,32 @@ END;
 $definition$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION freeze(name, name)
 IS 'Add boundary constraints for all columns ';
+
+
+---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION set_freeze_column(
+    my_relid oid,
+    my_column_name name,
+    my_lower_bound_overlap text
+) RETURNS boolean AS $definition$
+BEGIN
+    UPDATE rolling_window.columns_to_freeze
+    SET lower_bound_overlap = my_lower_bound_overlap
+    WHERE relid = my_relid
+      AND column_name = my_column_name;
+    IF found THEN
+        RETURN true;
+    END IF;
+
+    BEGIN
+        INSERT INTO rolling_window.columns_to_freeze (relid, column_name, lower_bound_overlap)
+        VALUES (my_relid, my_column_name, my_lower_bound_overlap);
+        RETURN false;
+    EXCEPTION WHEN unique_violation
+    THEN
+        -- do nothing, loop and try update again.
+    END;
+END;
+$definition$ LANGUAGE plpgsql;
+COMMENT ON FUNCTION set_freeze_column(oid, name, text)
+IS 'Set a freeze column.';

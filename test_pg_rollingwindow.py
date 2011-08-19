@@ -165,8 +165,7 @@ WHERE c.relname = %(table)s
         self.assertRaises(pg_rollingwindow.UsageError,
                           self.target.add,
                           'fake_attname','fake_step',
-                          'fake_non_empty_partitions_to_keep', 'fake_reserve_partitions_to_keep', 'fake_lag',
-                          ['f1', 'f2'])
+                          'fake_non_empty_partitions_to_keep', 'fake_reserve_partitions_to_keep', 'fake_lag')
 
     def test_add(self):
         self.maxDiff = None
@@ -207,8 +206,7 @@ RETURNING relid,
             ]
 
         self.target.add('fake_attname','fake_step',
-                'fake_non_empty_partitions_to_keep', 'fake_reserve_partitions_to_keep', 'fake_lag',
-                ['f1', 'f2']
+                'fake_non_empty_partitions_to_keep', 'fake_reserve_partitions_to_keep', 'fake_lag'
             )
 
         method_calls = self.mock_cursor.return_value.method_calls
@@ -218,12 +216,6 @@ RETURNING relid,
         self.assertEqual({}, method_calls[n][2])
         n += 1
         self.assertEqual('fetchone', method_calls[n][0])    # get _relid
-        n += 1
-        self.assertEqual('executemany', method_calls[n][0]) # add -> insert frozen tables
-        self.assertEqual(2, len(method_calls[n][1]))
-        self.assertEqual(freeze_insert, method_calls[n][1][0])
-#        self.assertEqual(None, method_calls[n][1][1])
-        self.assertEqual({}, method_calls[n][2])
         n += 1
         self.assertEqual('execute', method_calls[n][0])      # all limbo partition
         self.assertEqual((limbo_select, limbo_params), method_calls[n][1])

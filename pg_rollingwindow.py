@@ -534,8 +534,7 @@ WHERE rolling_window.maintained_table.relid = c.oid
 
     def add(self, attname, step,
             non_empty_partitions_to_keep, reserve_partitions_to_keep,
-            data_lag_window,
-            freeze_columns):
+            data_lag_window):
         """Add a table to the list of tables under management."""
         l = getLogger('RollingWindow.add')
         l.debug('Adding %s.%s', self.schema, self.table)
@@ -545,7 +544,6 @@ WHERE rolling_window.maintained_table.relid = c.oid
         self._step = step
         self._non_empty_partitions_to_keep = non_empty_partitions_to_keep
         self._reserve_partitions_to_keep = reserve_partitions_to_keep
-        self._freeze_columns = freeze_columns
         self._data_lag_window = data_lag_window
         self.db.connection.set_isolation_level(ISOLATION_LEVEL_READ_COMMITTED)
         cursor = self.db.connection.cursor()
@@ -578,10 +576,6 @@ RETURNING relid,
         if cursor.rowcount < 1:     # can't be more than 1 given catalog schema
             raise UsageError('No row inserted. Does %s.%s exist?' % (self.schema, self.table))
         self._relid, self._last_partition_dumped = cursor.fetchone()
-        if len(freeze_columns) > 0:
-            l.debug('adding freeze_columns: %s', freeze_columns)
-            cursor.executemany('INSERT INTO rolling_window.columns_to_freeze (relid, column_name) VALUES (%s, %s)',
-                               [(self._relid, x) for x in freeze_columns])
         cursor.execute('SELECT rolling_window.add_limbo_partition(%(schema)s, %(table)s)',
             {'schema': self.schema, 'table': self.table})
         if cursor.rowcount < 1:
@@ -589,6 +583,18 @@ RETURNING relid,
         self._is_managed = True
         self.db.connection.commit()
         self.db.connection.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+
+    def freeze_column(self, column, overlap):
+        l = getLogger('RollingWindow.freeze_column')
+        if overlap is None:
+            l.debug('Freezing column %s.%s.%s with no overlap bounary', self.schema, self.table, column)
+        else:
+            l.debug('Freezing column %s.%s.%s with overlap bounary %s', self.schema, self.table, column, overlap)
+        if not self.is_managed:
+            raise UsageError('May not set a freeze column on a table which is not managed.')
+        cursor = self.db.connection.cursor()
+        cursor.execute('SELECT rolling_window.set_freeze_column(%(relid)s, %(column_name)s, %(lower_bound_overlap)s)',
+                       {'relid': self.relid, 'column_name': column, 'lower_bound_overlap': overlap})
 
     class PartitionResult(object):
         def __init__(self, method, partition_name, rows_moved):
@@ -860,8 +866,7 @@ def add(options):
           options.step,
           options.partition_retention,
           options.partition_ahead,
-          options.data_lag_window,
-          options.freeze_columns)
+          options.data_lag_window)
 
 ##########################################################################
 def roll(options):
@@ -919,6 +924,16 @@ def list(options):
             list_table(options.db, managed_table[0], managed_table[1], options.verbosity)
 
 ##########################################################################
+def freeze_column(options):
+    l =getLogger('freeze_column')
+    if options.overlap is None:
+        l.debug('Freezing column %s.%s.%s with no overlap')
+    else:
+        l.debug('Freezing column %s.%s.%s with overlap "%s"')
+    t = RollingWindow(options.db, options.schema, options.table)
+    t.freeze_column(options.column, options.overlap)
+
+##########################################################################
 def freeze_table(db, schema, table, cluster):
     l = getLogger('freeze_table')
     l.debug('Freezing %s.%s', schema, table)
@@ -933,8 +948,11 @@ def freeze_table(db, schema, table, cluster):
 def freeze(options):
     l = getLogger('freeze')
     l.debug('Freezing')
-    if options.table is not None:   # I'm rolling a single table
-        freeze_table(options.db, options.schema, options.table, options.cluster)
+    if options.table is not None:
+        if options.column is not None:  # Configuration mode
+            freeze_column(options)
+        else:
+            freeze_table(options.db, options.schema, options.table, options.cluster)
     else:
         l.debug('No table specified. Freeze them all.')
         m = MaintainedTables(options.db)
@@ -1006,23 +1024,26 @@ actions = {
 def main():
     usage="""usage: %prog [list|add|roll|freeze] ...
 List tables under management (or details about a specific table with the table parameter):
-    list [-t <table>] [<PostgreSQL options>]
+    list [[-n <schema] -t <table>] [<PostgreSQL options>]
 
 Adds table to the rolling window system for maintenance.
-    add -t <table> -c <column> -s <step> -r <retention> -a <advanced> [-f <freeze column> [-f ...]] [<PostgreSQL options>]
+    add [-n <schema] -t <table> -c <column> -s <step> -r <retention> -a <advanced> [-f <freeze column> [-f ...]] [<PostgreSQL options>]
 
 Roll the table (or all maintained tables if no table parameter):
 Specifying the --vacuum_parent_after_every_move may help for initial rolls on systems with low disk.
-    roll [-t <table>] [--vacuum_parent_after_every_move] [<PostgreSQL options>]
+    roll [[-n <schema] -t <table>] [--vacuum_parent_after_every_move] [<PostgreSQL options>]
 
-Freeze all eligible partitions for the table (or all maintained tables if no table parameter):
+Specify a column and optional lower_bound_overlap to configure a column for freezing.
+The presence of a column paramater causes configuration behavior.
+    freeze [[-n <schema] -t <table> [-c <column> [--overlap <overlap>]]] [<PostgreSQL options>]
+Otherwise, this will freeze all eligible partitions for the table (or all maintained tables if no table parameter).
 Specifying the --cluster parameter will cause the table to be clustered after freezing.
-    freeze [-t <table>] [--cluster] [<PostgreSQL options>]
+    freeze [[-n <schema] -t <table>] [--cluster] [<PostgreSQL options>]
 
 Cleanup and (re-)freeze all eligible partitions for the table (or all maintained tables if no table parameter).
 If a freeze_column and lower_bound_overlap are provided, apply that offset to the table.freeze_column,
-moving data that is out of bounds into the limbo table.
-    cleanup [-t <table> [-f <freeze_column> [--lower_bound_overlap <overlap>]]] [<PostgreSQL options>]
+moving data that is out of bounds into the limbo table. NOT IMPLEMENTED (yet)
+    cleanup [[-n <schema] -t <table> [-f <freeze_column> [--overlap <overlap>]]] [<PostgreSQL options>]
 
 Dump all frozen / freezable partitions which have not yet been dumped:
     dump --dump_directory=/path/to/dir
@@ -1048,7 +1069,7 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
     parser.add_option('-n', '--schema', default='public',
         help='... in this particular schema, defaulting to public')
     parser.add_option('-c', '--column',
-        help='column to use as a partition key, required')
+        help='column to use in operation. For add, this is the partition key. For freeze, this is the freeze column.')
     parser.add_option('-s', '--step',
         help='partition width in terms of the partition column (lower_bound + step - 1 = upper_bound)')
     parser.add_option('-r', '--partition_retention', dest='partition_retention',
@@ -1059,7 +1080,7 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
         help='partitions following the highest partition with data to hold back from freezing / dumping')
     parser.add_option('--cluster', action='store_true', default=False,
         help='cluster partitions when freezing them')
-    parser.add_option('--lower_bound_overlap',
+    parser.add_option('--overlap',
         help='what to subtract from the upper bound of the previous partition to generate the new lower bound for this partition for the associated column')
     parser.add_option('--vacuum_parent_after_every_move', action='store_true', default=False,
         help='when rolling data to partitions, VACUUM FULL the parent table after moving each partition. Super slow, but reclaims disk space. Not particularly useful except when rolling a lot of data out of the parent table.')
