@@ -1024,26 +1024,26 @@ actions = {
 def main():
     usage="""usage: %prog [list|add|roll|freeze] ...
 List tables under management (or details about a specific table with the table parameter):
-    list [[-n <schema] -t <table>] [<PostgreSQL options>]
+    list [[-n <schema>] -t <table>] [<PostgreSQL options>]
 
 Adds table to the rolling window system for maintenance.
-    add [-n <schema] -t <table> -c <column> -s <step> -r <retention> -a <advanced> [-f <freeze column> [-f ...]] [<PostgreSQL options>]
+    add [-n <schema>] -t <table> -c <column> -s <step> -r <retention> -a <advanced> [-f <freeze column> [-f ...]] [<PostgreSQL options>]
 
 Roll the table (or all maintained tables if no table parameter):
 Specifying the --vacuum_parent_after_every_move may help for initial rolls on systems with low disk.
-    roll [[-n <schema] -t <table>] [--vacuum_parent_after_every_move] [<PostgreSQL options>]
+    roll [[-n <schema>] -t <table>] [--vacuum_parent_after_every_move] [<PostgreSQL options>]
 
 Specify a column and optional lower_bound_overlap to configure a column for freezing.
 The presence of a column paramater causes configuration behavior.
-    freeze [[-n <schema] -t <table> [-c <column> [--overlap <overlap>]]] [<PostgreSQL options>]
+    freeze [[-n <schema>] -t <table> [-c <column> [--overlap <overlap>]]] [<PostgreSQL options>]
 Otherwise, this will freeze all eligible partitions for the table (or all maintained tables if no table parameter).
 Specifying the --cluster parameter will cause the table to be clustered after freezing.
-    freeze [[-n <schema] -t <table>] [--cluster] [<PostgreSQL options>]
+    freeze [[-n <schema>] -t <table>] [--cluster] [<PostgreSQL options>]
 
 Cleanup and (re-)freeze all eligible partitions for the table (or all maintained tables if no table parameter).
 If a freeze_column and lower_bound_overlap are provided, apply that offset to the table.freeze_column,
 moving data that is out of bounds into the limbo table. NOT IMPLEMENTED (yet)
-    cleanup [[-n <schema] -t <table> [-f <freeze_column> [--overlap <overlap>]]] [<PostgreSQL options>]
+    cleanup [[-n <schema>] -t <table> [-f <freeze_column> [--overlap <overlap>]]] [<PostgreSQL options>]
 
 Dump all frozen / freezable partitions which have not yet been dumped:
     dump --dump_directory=/path/to/dir
