@@ -541,6 +541,11 @@ CREATE TABLE list_partitions_result (
     CONSTRAINT no_rows CHECK (partition_table_oid = 0)
 ) INHERITS (pg_catalog.pg_class);
 
+-- TODO: if we can switch this to using the LIKE clause then it will
+-- remove the requirement for the user to be a database superuser.
+-- However, the whole point of using INHERITS is that it eliminates
+-- any issues with pg catalog schema changes on ugrade.
+
 
 ---------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION list_partitions(
