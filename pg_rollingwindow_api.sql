@@ -199,61 +199,7 @@ BEGIN
         || '() INHERITS ( ' || quote_ident(parent) || ' )';
     EXECUTE create_str;
 
-    FOR index_oid IN EXECUTE index_query_str USING parent_namespace, parent
-    LOOP
-        -- parse the index create string starting from the end and going towards the front
-        parent_index_str := pg_get_indexdef(index_oid);
-        where_start := position(' WHERE ' IN parent_index_str);
-        IF where_start > 0
-        THEN
-            where_str := substring(parent_index_str FROM where_start);
-            parent_index_str := substring(parent_index_str FROM 1 FOR where_start);
-        ELSE
-            where_str := '';
-        END IF;
-        tablespace_start := position(' TABLESPACE ' in parent_index_str);
-        IF tablespace_start > 0
-        THEN
-            tablespace_str := substring(parent_index_str FROM tablespace_start);
-            parent_index_str := substring(parent_index_str FROM 1 FOR tablespace_start);
-        ELSE
-            tablespace_str := '';
-        END IF;
-        with_start := position(' WITH ' IN parent_index_str) + length('');
-        IF with_start > 0
-        THEN
-            -- WRITEME: handle cases where we already have WITH() stuff
-            RAISE 'pg_rollingwindow does not yet handle indexes that already have WITH clauses';
-        ELSE
-            with_str := ' WITH (fillfactor = 100)';
-        END IF;
-        using_start := position(' USING ' IN parent_index_str);
-        using_str := substring(parent_index_str FROM using_start);
-        parent_index_str := substring(parent_index_str FROM 1 FOR using_start);
-        RAISE NOTICE 'using_str: %', using_str;
-
-        on_start := position(' ON ' IN parent_index_str);
-        on_str := substring(parent_index_str FROM on_start);
-        parent_index_str := substring(parent_index_str FROM 1 FOR on_start);
-
-        index_name_start := position(' INDEX ' IN parent_index_str) + length(' INDEX ');
-        index_name_str := substring(parent_index_str FROM index_name_start);
-
-        IF position(parent IN index_name_str) > 0   -- if the parent name is in the index name.
-        THEN    -- We should replace the parent name with the child name inside the new index's name.
-            new_index_name_str := replace(index_name_str, parent, child);
-        ELSE    -- We should just give it something reasonable for an index name, so stick the child's name on as a prefix.
-            new_index_name_str := child || '_' || index_name_str;
-        END IF;
-
-        create_index_str := 'CREATE INDEX ' || quote_ident(new_index_name_str)
-            || ' ON ' || quote_ident(child)
-            || using_str
-            || with_str
-            || tablespace_str
-            || where_str;
-        EXECUTE create_index_str;
-    END LOOP;
+    PERFORM * FROM rolling_window.clone_indexes_to_partition(parent_namespace, parent, child);
     RETURN child;
 END;
 $definition$ LANGUAGE plpgsql;
@@ -364,6 +310,28 @@ CREATE OR REPLACE FUNCTION clone_indexes_to_partition(
 ) RETURNS SETOF TEXT AS $definition$
 DECLARE
     child name;
+    index_str text;
+BEGIN
+    child := rolling_window.child_name(parent, lower_bound);
+    FOR index_str IN
+        SELECT r.a
+        FROM rolling_window.clone_indexes_to_partition(parent_namespace, parent, child) AS r(a)
+    LOOP
+        RETURN NEXT index_str;
+    END LOOP;
+END;
+$definition$ LANGUAGE plpgsql;
+COMMENT ON FUNCTION clone_indexes_to_partition(name, name, bigint)
+IS 'Apply all the indexes on a parent table to a partition.';
+
+
+---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION clone_indexes_to_partition(
+    parent_namespace name,
+    parent name,
+    child name
+) RETURNS SETOF TEXT AS $definition$
+DECLARE
     index_oid oid;
     index_query_str text := $q$
         SELECT indexrelid FROM pg_index
@@ -390,7 +358,6 @@ DECLARE
     new_index_name_str text;
     create_index_str text;
 BEGIN
-    child := rolling_window.child_name(parent, lower_bound);
     FOR index_oid IN EXECUTE index_query_str USING parent_namespace, parent
     LOOP
         -- parse the index create string starting from the end and going towards the front
@@ -448,8 +415,8 @@ BEGIN
     END LOOP;
 END;
 $definition$ LANGUAGE plpgsql;
-COMMENT ON FUNCTION clone_indexes_to_partition(name, name, bigint)
-IS 'Apply all the indexes on a parent table to a partition.';
+COMMENT ON FUNCTION clone_indexes_to_partition(name, name, name)
+IS 'Apply all the indexes on a parent table to a partition. Rather than specifying a lower_bound, this requires the child name to support working with limbo tables.';
 
 
 ---------------------------------------------------------------------
@@ -510,7 +477,7 @@ BEGIN
     THEN
         FOR index_str IN
             SELECT r.a
-            FROM rolling_window.clone_indexes_to_partition(parent_namespace, parent, lower_bound) AS r(a)
+            FROM rolling_window.clone_indexes_to_partition(parent_namespace, parent, child) AS r(a)
         LOOP
             -- Chomp off 'CREATE INDEX ' = 13 characters
             index_str := substring(index_str from 14);
