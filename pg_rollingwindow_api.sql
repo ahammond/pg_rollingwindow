@@ -158,7 +158,7 @@ CREATE OR REPLACE FUNCTION add_limbo_partition(
     parent name
 ) RETURNS name AS $definition$
 DECLARE
-    limbo name;
+    child name;
     create_str text;
     index_oid oid;
     index_query_str text := $q$
@@ -171,42 +171,90 @@ DECLARE
               AND relkind = 'r')
         $q$;
     parent_index_str text;
-    suffix_start int;
-    suffix_str text;
-    column_name_start int;
-    column_name_stop int;
-    column_name_str text;
+    where_start int;
+    where_str text;
+    tablespace_start int;
+    tablespace_str text;
+    with_start int;
+    with_str text;
+    using_start int;
+    using_str text;
+    on_start int;
+    on_str text;
+    index_name_start int;
     index_name_str text;
+    new_index_name_str text;
     create_index_str text;
 BEGIN
-    limbo := parent || '_limbo';
+    child := parent || '_limbo';
     IF EXISTS ( SELECT 1
         FROM pg_catalog.pg_class c
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
-        WHERE relname = limbo
+        WHERE relname = child
           AND nspname = parent_namespace )
     THEN
         RETURN NULL;    -- already exists.
     END IF;
-    create_str := 'CREATE TABLE ' || quote_ident(limbo)
+    create_str := 'CREATE TABLE ' || quote_ident(child)
         || '() INHERITS ( ' || quote_ident(parent) || ' )';
     EXECUTE create_str;
 
     FOR index_oid IN EXECUTE index_query_str USING parent_namespace, parent
     LOOP
+        -- parse the index create string starting from the end and going towards the front
         parent_index_str := pg_get_indexdef(index_oid);
-        suffix_start := position(' USING ' IN parent_index_str) + length(' USING ');
-        suffix_str := substring(parent_index_str FROM suffix_start);
-        column_name_start := position(parent IN parent_index_str) + length(parent) + 1;
-        column_name_stop := position(' ON ' IN parent_index_str);
-        column_name_str := substring(parent_index_str FROM column_name_start FOR column_name_stop - column_name_start);
-        index_name_str := 'idx_' || limbo || '_' || column_name_str;
-        create_index_str := 'CREATE INDEX ' || quote_ident(index_name_str)
-            || ' ON ' || quote_ident(limbo)
-            || ' USING ' || suffix_str;
+        where_start := position(' WHERE ' IN parent_index_str);
+        IF where_start > 0
+        THEN
+            where_str := substring(parent_index_str FROM where_start);
+            parent_index_str := substring(parent_index_str FROM 1 FOR where_start);
+        ELSE
+            where_str := '';
+        END IF;
+        tablespace_start := position(' TABLESPACE ' in parent_index_str);
+        IF tablespace_start > 0
+        THEN
+            tablespace_str := substring(parent_index_str FROM tablespace_start);
+            parent_index_str := substring(parent_index_str FROM 1 FOR tablespace_start);
+        ELSE
+            tablespace_str := '';
+        END IF;
+        with_start := position(' WITH ' IN parent_index_str) + length('');
+        IF with_start > 0
+        THEN
+            -- WRITEME: handle cases where we already have WITH() stuff
+            RAISE 'pg_rollingwindow does not yet handle indexes that already have WITH clauses';
+        ELSE
+            with_str := ' WITH (fillfactor = 100)';
+        END IF;
+        using_start := position(' USING ' IN parent_index_str);
+        using_str := substring(parent_index_str FROM using_start);
+        parent_index_str := substring(parent_index_str FROM 1 FOR using_start);
+        RAISE NOTICE 'using_str: %', using_str;
+
+        on_start := position(' ON ' IN parent_index_str);
+        on_str := substring(parent_index_str FROM on_start);
+        parent_index_str := substring(parent_index_str FROM 1 FOR on_start);
+
+        index_name_start := position(' INDEX ' IN parent_index_str) + length(' INDEX ');
+        index_name_str := substring(parent_index_str FROM index_name_start);
+
+        IF position(parent IN index_name_str) > 0   -- if the parent name is in the index name.
+        THEN    -- We should replace the parent name with the child name inside the new index's name.
+            new_index_name_str := replace(index_name_str, parent, child);
+        ELSE    -- We should just give it something reasonable for an index name, so stick the child's name on as a prefix.
+            new_index_name_str := child || '_' || index_name_str;
+        END IF;
+
+        create_index_str := 'CREATE INDEX ' || quote_ident(new_index_name_str)
+            || ' ON ' || quote_ident(child)
+            || using_str
+            || with_str
+            || tablespace_str
+            || where_str;
         EXECUTE create_index_str;
     END LOOP;
-    RETURN limbo;
+    RETURN child;
 END;
 $definition$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION add_limbo_partition(name, name)
@@ -327,29 +375,74 @@ DECLARE
               AND relkind = 'r')
         $q$;
     parent_index_str text;
-    suffix_start int;
-    suffix_str text;
-    column_name_start int;
-    column_name_stop int;
-    column_name_str text;
+    where_start int;
+    where_str text;
+    tablespace_start int;
+    tablespace_str text;
+    with_start int;
+    with_str text;
+    using_start int;
+    using_str text;
+    on_start int;
+    on_str text;
+    index_name_start int;
     index_name_str text;
+    new_index_name_str text;
     create_index_str text;
 BEGIN
     child := rolling_window.child_name(parent, lower_bound);
     FOR index_oid IN EXECUTE index_query_str USING parent_namespace, parent
     LOOP
+        -- parse the index create string starting from the end and going towards the front
         parent_index_str := pg_get_indexdef(index_oid);
-        suffix_start := position(' USING ' IN parent_index_str) + length(' USING ');
-        suffix_str := substring(parent_index_str FROM suffix_start);
-        column_name_start := position(parent IN parent_index_str) + length(parent) + 1;
-        column_name_stop := position(' ON ' IN parent_index_str);
-        column_name_str := substring(parent_index_str FROM column_name_start FOR column_name_stop - column_name_start);
-        index_name_str := 'idx_' || child || '_' || column_name_str;
-        create_index_str := 'CREATE INDEX ' || quote_ident(index_name_str)
+        where_start := position(' WHERE ' IN parent_index_str);
+        IF where_start > 0
+        THEN
+            where_str := substring(parent_index_str FROM where_start);
+            parent_index_str := substring(parent_index_str FROM 1 FOR where_start);
+        ELSE
+            where_str := '';
+        END IF;
+        tablespace_start := position(' TABLESPACE ' in parent_index_str);
+        IF tablespace_start > 0
+        THEN
+            tablespace_str := substring(parent_index_str FROM tablespace_start);
+            parent_index_str := substring(parent_index_str FROM 1 FOR tablespace_start);
+        ELSE
+            tablespace_str := '';
+        END IF;
+        with_start := position(' WITH ' IN parent_index_str) + length('');
+        IF with_start > 0
+        THEN
+            -- WRITEME: handle cases where we already have WITH() stuff
+            RAISE 'pg_rollingwindow does not yet handle indexes that already have WITH clauses';
+        ELSE
+            with_str := ' WITH (fillfactor = 100)';
+        END IF;
+        using_start := position(' USING ' IN parent_index_str);
+        using_str := substring(parent_index_str FROM using_start);
+        parent_index_str := substring(parent_index_str FROM 1 FOR using_start);
+
+        on_start := position(' ON ' IN parent_index_str);
+        on_str := substring(parent_index_str FROM on_start);
+        parent_index_str := substring(parent_index_str FROM 1 FOR on_start);
+
+        index_name_start := position(' INDEX ' IN parent_index_str) + length(' INDEX ');
+        index_name_str := substring(parent_index_str FROM index_name_start);
+
+        IF position(parent IN index_name_str) > 0   -- if the parent name is in the index name.
+        THEN    -- We should replace the parent name with the child name inside the new index's name.
+            new_index_name_str := replace(index_name_str, parent, child);
+        ELSE    -- We should just give it something reasonable for an index name, so stick the child's name on as a prefix.
+            new_index_name_str := child || '_' || index_name_str;
+        END IF;
+
+        create_index_str := 'CREATE INDEX ' || quote_ident(new_index_name_str)
             || ' ON ' || quote_ident(child)
-            || ' USING ' || suffix_str
-            || ' WITH (fillfactor = 100)';
-        -- TODO: what about when the suffix already has a WITH ...?
+            || using_str
+            || with_str
+            || tablespace_str
+            || where_str;
         EXECUTE create_index_str;
         RETURN NEXT create_index_str;
     END LOOP;

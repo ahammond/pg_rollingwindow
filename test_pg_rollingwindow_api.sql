@@ -54,9 +54,10 @@ SELECT * FROM rolling_window.min_max_in_parent_only('public', 'foo') ;
 
 SELECT p FROM rolling_window.add_partitions_for_data_range('public', 'foo', NULL, NULL) AS a(p) ;
 
+-- clone_indexes, but not to_limbo
 SELECT * FROM rolling_window.move_data_to_partition('public', 'foo', 10, True, False);
 
--- test sending to limbo
+-- clone_indexes and to_limbo
 SELECT * FROM rolling_window.move_data_to_partition('public', 'foo', 20, True, True);
 
 -- Used by move_lowest_data_to_partition when 3rd parameter is True
