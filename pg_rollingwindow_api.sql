@@ -332,9 +332,9 @@ CREATE OR REPLACE FUNCTION clone_indexes_to_partition(
     child name
 ) RETURNS SETOF TEXT AS $definition$
 DECLARE
-    index_oid oid;
     index_query_str text := $q$
-        SELECT indexrelid FROM pg_index
+        SELECT pg_get_indexdef(indexrelid)
+        FROM pg_index
         WHERE indrelid = (
             SELECT c.oid FROM pg_catalog.pg_class c
             INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
@@ -358,10 +358,9 @@ DECLARE
     new_index_name_str text;
     create_index_str text;
 BEGIN
-    FOR index_oid IN EXECUTE index_query_str USING parent_namespace, parent
+    FOR parent_index_str IN EXECUTE index_query_str USING parent_namespace, parent
     LOOP
         -- parse the index create string starting from the end and going towards the front
-        parent_index_str := pg_get_indexdef(index_oid);
         where_start := position(' WHERE ' IN parent_index_str);
         IF where_start > 0
         THEN
