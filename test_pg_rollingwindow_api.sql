@@ -6,8 +6,10 @@ CREATE TABLE foo(
     id serial primary key,
     name bigint not null,
     ts timestamptz not null default now(),
-    rnd bigint not null default (floor(random() * 9223372036854775807))
+    rnd bigint not null default (floor(random() * 9223372036854775807)),
+    unique(name, ts)
 ) ;
+CREATE INDEX foo_rnd ON foo(rnd) WHERE rnd < 10000;
 
 INSERT INTO foo(name) SELECT a FROM generate_series(1, 99) AS s(a) ;
 INSERT INTO foo(name) SELECT a FROM generate_series(1, 99) AS s(a) ;
@@ -20,7 +22,8 @@ CREATE TABLE baz (
     id serial primary key,
     name bigint not null,
     ts timestamptz not null default now(),
-    rnd bigint not null default (floor(random() * 9223372036854775807))
+    rnd bigint not null default (floor(random() * 9223372036854775807)),
+    unique(name, ts)
 ) ;
 
 INSERT INTO baz(name) SELECT a FROM generate_series(1, 99) AS s(a) ;

@@ -365,7 +365,7 @@ BEGIN
         IF where_start > 0
         THEN
             where_str := substring(parent_index_str FROM where_start);
-            parent_index_str := substring(parent_index_str FROM 1 FOR where_start);
+            parent_index_str := substring(parent_index_str FROM 1 FOR where_start - 1);
         ELSE
             where_str := '';
         END IF;
@@ -373,7 +373,7 @@ BEGIN
         IF tablespace_start > 0
         THEN
             tablespace_str := substring(parent_index_str FROM tablespace_start);
-            parent_index_str := substring(parent_index_str FROM 1 FOR tablespace_start);
+            parent_index_str := substring(parent_index_str FROM 1 FOR tablespace_start - 1);
         ELSE
             tablespace_str := '';
         END IF;
@@ -387,11 +387,11 @@ BEGIN
         END IF;
         using_start := position(' USING ' IN parent_index_str);
         using_str := substring(parent_index_str FROM using_start);
-        parent_index_str := substring(parent_index_str FROM 1 FOR using_start);
+        parent_index_str := substring(parent_index_str FROM 1 FOR using_start - 1);
 
         on_start := position(' ON ' IN parent_index_str);
         on_str := substring(parent_index_str FROM on_start);
-        parent_index_str := substring(parent_index_str FROM 1 FOR on_start);
+        parent_index_str := substring(parent_index_str FROM 1 FOR on_start - 1);
 
         index_name_start := position(' INDEX ' IN parent_index_str) + length(' INDEX ');
         index_name_str := substring(parent_index_str FROM index_name_start);
@@ -403,7 +403,11 @@ BEGIN
             new_index_name_str := child || '_' || index_name_str;
         END IF;
 
-        create_index_str := 'CREATE INDEX ' || quote_ident(new_index_name_str)
+        -- TODO: address cloning of UNIQUE / PRIMARY KEY constraints as actual constraints rather than just swooping their indexes.
+        parent_index_str := substring(parent_index_str FROM 1 FOR index_name_start -1);
+
+        create_index_str := parent_index_str
+            || quote_ident(new_index_name_str)
             || ' ON ' || quote_ident(child)
             || using_str
             || with_str
@@ -478,13 +482,11 @@ BEGIN
             SELECT r.a
             FROM rolling_window.clone_indexes_to_partition(parent_namespace, parent, child) AS r(a)
         LOOP
-            -- Chomp off 'CREATE INDEX ' = 13 characters
-            index_str := substring(index_str from 14);
-            index_name := substring(index_str from 0 for position(' ON ' in index_str));
-            -- Chomp off everything up to the column list. ' USING (' = 8 characters
-            index_str := substring(index_str from position(' USING (' in index_str) + 8);
+            index_str := substring(index_str from position(' INDEX ' in index_str) + length(' INDEX '));
+            index_name := substring(index_str from 1 for position(' ON ' in index_str) - 1);
+            -- Chomp off everything up to the column list.
+            index_str := substring(index_str from position(' USING (' in index_str) + length(' USING ('));
             index_position := position(attname IN index_str);
-
 
             -- if we don't have an index, so take the first we get
             IF best_index_name IS NULL
