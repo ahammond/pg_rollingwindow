@@ -1,5 +1,10 @@
 -- Some commands for testing the sql api.
 
+-- ./pg_rollingwindow.py init
+-- ./pg_rollingwindow.py add -t foo -c name -s 10 -a 3 -r 999999999 -l 3
+-- ./pg_rollingwindow.py freeze -t foo -c rnd
+-- ./pg_rollingwindow.py freeze -t foo -c ts --overlap "'1 day'::interval"
+
 SET search_path TO public ;
 
 CREATE TABLE foo(

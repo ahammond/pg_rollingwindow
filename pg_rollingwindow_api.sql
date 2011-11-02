@@ -605,8 +605,13 @@ CREATE TABLE list_partitions_result (
 -- TODO: if we can switch this to using the LIKE clause then it will
 -- remove the requirement for the user to be a database superuser.
 -- However, the whole point of using INHERITS is that it eliminates
--- any issues with pg catalog schema changes on ugrade.
+-- any issues with pg catalog schema changes on upgrade.
+-- Maybe this is a non-issue?
+-- What if the procedure for database upgrades is to re-init / add?
+-- I don't like that approach since it demands user interaction.
 
+-- TODO: refactor code so total_relation_size_in_bytes is not included
+-- call as necessary since this is pretty heavy.
 
 ---------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION list_partitions(
@@ -752,28 +757,35 @@ IS 'Remove any partitions which extend beyond retention policy as defined by mai
 
 
 ---------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION clean_partition(
+CREATE OR REPLACE FUNCTION move_data_below_lower_bound_overlap_to_limbo(
     parent_namespace name,
     parent name,
     lower_bound bigint
 ) RETURNS bigint AS $definition$
 DECLARE
-    child_name name;
-    previous_child_name name;
+    parent_relid oid;
     step bigint;
-    column_name name;
+    old_child_relid oid;
+    constrained_column name;
     lower_bound_overlap text;
-    child_relid oid;
-    previous_child_relid oid;
-    previous_child_constraint_oid oid;
-    previous_child_constraint text;
-    previous_child_upper_bound text;
     where_clause text;
+    old_bound_src text;
+    ordinal text;
+    old_upper_bound_start int;
+    old_upper_bound_length int;
+    old_upper_bound text;
+    new_lower_bound text;
+    new_type text;
+    factor text;
+    boundary_math text;
+    child_name name;
     insert_str text;
+    insert_count bigint;
     delete_str text;
+    delete_count bigint;
 BEGIN
-    SELECT m.step
-        INTO STRICT step
+    SELECT m.relid, m.step
+        INTO STRICT parent_relid, step
         FROM rolling_window.maintained_table m
         INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
@@ -784,58 +796,88 @@ BEGIN
         RAISE EXCEPTION 'table not found in rolling_window.maintained_table';
     END IF;
 
-    child_name := rolling_window.child_name(parent, lower_bound);
-    previous_child_name := rolling_window.child_name(parent, lower_bound - step);
-
-    SELECT c.oid
-        INTO STRICT child_relid
-        FROM pg_catalog.pg_class c
-        INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
-        WHERE c.relname = child_name
-        AND n.nspname = parent_namespace;
-
-    SELECT c.oid
-        INTO STRICT previous_child_relid
-        FROM pg_catalog.pg_class c
-        INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
-        WHERE c.relname = previous_child_name
-        AND n.nspname = parent_namespace;
-    IF previous_child_relid IS NULL
-    THEN    -- can't limit lower-bound without previous_child having an appropriate boundary.
+    IF lower_bound - step < 0
+    THEN
         RETURN 0;
     END IF;
 
-    -- assemble a WHERE clause
-    FOR column_name, lower_bound_overlap IN
-        SELECT ctf.column_name, ctf.lower_bound_overlap
-        FROM rolling_window.columns_to_freeze ctf
-        WHERE ctf.relid = child_relid AND ctf.lower_bound_overlap IS NOT NULL
+    SELECT p.partition_table_oid
+        INTO STRICT old_child_relid
+        FROM rolling_window.list_partitions(parent_namespace, parent) AS p
+        WHERE p.relname = rolling_window.child_name(parent, lower_bound - step);
+    IF old_child_relid IS NULL
+    THEN    -- since there is no older child partition, we have nothing to move.
+        RETURN 0;
+    END IF;
+
+    FOR constrained_column, lower_bound_overlap IN
+        SELECT f.column_name, f.lower_bound_overlap
+        FROM rolling_window.columns_to_freeze f
+        WHERE f.relid = parent_relid
     LOOP
-        SELECT c.oid
-            INTO STRICT previous_child_constraint_oid
-            FROM pg_constraint c
-            WHERE c.conname = 'bound_' || column_name
-              AND c.conrelid = previous_child_relid;
-        CONTINUE WHEN previous_child_constraint_oid IS NULL;
-        previous_child_constraint := pg_get_constraintdef(previous_child_constraint_oid);
-        -- CHECK (((rnd >= 408477340042002432::bigint) AND (rnd <= 9006287493313593344::bigint)))
-        -- CHECK (((ts >= '2011-07-05 15:06:57.343784-07'::timestamp with time zone) AND (ts <= '2011-07-05 15:06:57.348651-07'::timestamp with time zone)))
-        -- look for '<= ' and then take everything up to the first ')'
-        previous_child_upper_bound := substring(previous_child_constraint from position(' <= ' in previous_child_constraint));
-        previous_child_upper_bound := substring(previous_child_upper_bound from 1 for position(')' in previous_child_upper_bound) - 1);
-        RAISE NOTICE 'pcub: %', previous_child_upper_bound;
+        --If we are not worried about overlap for this column...
+        CONTINUE WHEN lower_bound_overlap IS NULL;
+        old_bound_src := NULL;
 
-        -- TODO: add test data with lower_bound_overlap not null.
+        -- find the old_child's bound_foo constraint, if any
+        SELECT c.consrc
+            INTO STRICT old_bound_src
+            FROM pg_catalog.pg_constraint c
+            WHERE conname = 'bound_' || constrained_column
+              AND conrelid = old_child_relid;
+        CONTINUE WHEN old_bound_src IS NULL;      -- we don't have an older bound, so... next?
 
+        -- parse out the upper bound
+        ordinal := constrained_column || ' <= ';
+        old_upper_bound_start := position(ordinal in old_bound_src) + length(ordinal);
+        old_upper_bound_length := 1 + length(old_bound_src) - old_upper_bound_start - length('))');
+        old_upper_bound := substring(old_bound_src from old_upper_bound_start for old_upper_bound_length);
+
+        -- calculate the new lower bound
+        boundary_math :=  'SELECT '
+            || old_upper_bound || ' - ' || lower_bound_overlap
+            || ' AS new_lower_bound, pg_typeof(' || old_upper_bound || ') AS new_type';
+        EXECUTE boundary_math INTO STRICT new_lower_bound, new_type;
+
+        factor := constrained_column || ' < ''' || new_lower_bound || '''::' || new_type;
+
+        -- generate a where clause factor and append it to the current clause.
+        IF where_clause IS NULL
+        THEN
+            where_clause := factor;
+        ELSE
+            where_clause := where_clause || ' AND ' || factor;
+        END IF;
     END LOOP;
-    -- insert out-of-bounds data into limbo table
-    -- delete from child table
-    -- drop associated bound constraints if any, for re-building.
-    RETURN 0;
+
+   -- Did we find any columns with overlap bounds? Otherwise, there's no data to move.
+    IF where_clause IS NULL THEN
+        RETURN 0;
+    END IF;
+
+    -- move data out of child partition to limbo table
+    child_name := rolling_window.child_name(parent, lower_bound);
+
+    insert_str := 'INSERT INTO ' || quote_ident(parent_namespace) || '.' || quote_ident(parent || '_limbo')
+        || ' SELECT * FROM ' || quote_ident(parent_namespace) || '.' || quote_ident(child_name)
+        || ' WHERE ' || where_clause;
+    EXECUTE insert_str;
+    GET DIAGNOSTICS insert_count = ROW_COUNT;
+
+    delete_str := 'DELETE FROM ' || quote_ident(parent_namespace) || '.' || quote_ident(child_name)
+        || ' WHERE ' || where_clause;
+    EXECUTE delete_str;
+    GET DIAGNOSTICS delete_count = ROW_COUNT;
+
+    IF insert_count != delete_count THEN
+        RAISE EXCEPTION 'Inserted % rows, but attempted to delete % rows.', insert_count, delete_count;
+    END IF;
+
+    RETURN insert_count;
 END;
 $definition$ LANGUAGE plpgsql;
-COMMENT ON FUNCTION clean_partition(name, name, bigint)
-IS 'Find the upper and lower bound for the constrained_column in the partition and add that as a table constraint.';
+COMMENT ON FUNCTION move_data_below_lower_bound_overlap_to_limbo(name, name, bigint)
+IS 'If we have defined allowable overlaps for this column, and there is a prior-partition with a boundary, remove to the limbo table any data that lies outside this boundary.';
 
 
 ---------------------------------------------------------------------
@@ -891,6 +933,7 @@ DECLARE
     freeze_column name;
     missing_constraint_query_str text;
 BEGIN
+    PERFORM rolling_window.move_data_below_lower_bound_overlap_to_limbo(parent_namespace, parent, lower_bound);
     SELECT c.oid, n.oid
         INTO STRICT parent_oid, namespace_oid
         FROM pg_catalog.pg_class c
@@ -997,19 +1040,13 @@ DECLARE
 BEGIN
     highest_freezable := rolling_window.highest_freezable(parent_namespace, parent);
     FOR child_relid, child_name IN
-        SELECT p.relid, p.relname
+        SELECT p.partition_table_oid, p.relname
         FROM rolling_window.list_partitions(parent_namespace, parent) AS p
         WHERE p.relname ~ (parent || E'_\\d+$')
           AND p.relname <= highest_freezable
         ORDER BY p.relname
     LOOP
         lower_bound := rolling_window.lower_bound_from_child_name(child_name);
-        -- Clean up naughty overlaps.
-        SELECT 1 FROM rolling_window.columns_to_freeze WHERE relid = child_relid AND lower_bound_overlap IS NOT NULL;
-        IF found
-        THEN
-            PERFORM rolling_window.clean_partition(parent_namespace, parent, lower_bound);
-        END IF;
         FOR new_constraint IN
             SELECT f.p
             FROM rolling_window.freeze_partition(
@@ -1054,4 +1091,4 @@ BEGIN
 END;
 $definition$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION set_freeze_column(oid, name, text)
-IS 'Set a freeze column.';
+IS 'Set a freeze column. Returns true if UPDATEd, false if INSERTed. This would be a single call to MERGE if PostgreSQL supported it.';
