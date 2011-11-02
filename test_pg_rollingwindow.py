@@ -196,7 +196,6 @@ RETURNING relid,
             'reserve_partitions_to_keep': 'fake_reserve_partitions_to_keep', 'step': 'fake_step',
             'table': 'fake_table', 'data_lag_window': 'fake_lag'}
 
-        freeze_insert = 'INSERT INTO rolling_window.columns_to_freeze (relid, column_name) VALUES (%s, %s)'
         limbo_select = 'SELECT rolling_window.add_limbo_partition(%(schema)s, %(table)s)'
         limbo_params = {'table': 'fake_table', 'schema': 'fake_schema'}
 
@@ -223,12 +222,50 @@ RETURNING relid,
         n += 1
         self.assertEqual(n, len(method_calls))
 
+    def test_freeze_column_no_overlap(self):
+        self.fetch_queue = self.standard_fetch_results + [
+            (True, ),
+        ]
+        result = self.target.freeze_column('fake_column')
+        self.assertEqual(True, result)
+        method_calls = self.mock_cursor.return_value.method_calls
+        n = self.verify_standard_fetch()
+        self.assertEqual('execute', method_calls[n][0])
+        self.assertEqual(('SELECT rolling_window.set_freeze_column(%(relid)s, %(column_name)s, %(lower_bound_overlap)s',
+            {'relid': 9872435, 'column_name': 'fake_column', 'lower_bound_overlap': None}), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('fetchone', method_calls[n][0])
+        self.assertEqual((), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual(n, len(method_calls))
+
+    def test_freeze_column_overlap(self):
+        self.fetch_queue = self.standard_fetch_results + [
+            (True, ),
+        ]
+        result = self.target.freeze_column('fake_column', 'fake_overlap')
+        self.assertEqual(True, result)
+        method_calls = self.mock_cursor.return_value.method_calls
+        n = self.verify_standard_fetch()
+        self.assertEqual('execute', method_calls[n][0])
+        self.assertEqual(('SELECT rolling_window.set_freeze_column(%(relid)s, %(column_name)s, %(lower_bound_overlap)s)',
+            {'relid': 9872435, 'column_name': 'fake_column',
+             'lower_bound_overlap': 'fake_overlap'}), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('fetchone', method_calls[n][0])
+        self.assertEqual((), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual(n, len(method_calls))
+
     def test_roll_unmanaged(self):
         self.assertRaises(pg_rollingwindow.UsageError, self.target.roll)
 
     def test_roll(self):
         self.fetch_queue = self.standard_fetch_results + [
-
             (('created_10', ),('created_20', )),        # partitions from add_partitions_for_data_range
             (123, ), # partition1 rows created
             (234, ), # partition2 rows created

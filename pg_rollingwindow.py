@@ -585,7 +585,7 @@ RETURNING relid,
         self.db.connection.commit()
         self.db.connection.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
 
-    def freeze_column(self, column, overlap):
+    def freeze_column(self, column, overlap=None):
         l = getLogger('RollingWindow.freeze_column')
         if overlap is None:
             l.debug('Freezing column %s.%s.%s with no overlap bounary', self.schema, self.table, column)
@@ -596,6 +596,12 @@ RETURNING relid,
         cursor = self.db.connection.cursor()
         cursor.execute('SELECT rolling_window.set_freeze_column(%(relid)s, %(column_name)s, %(lower_bound_overlap)s)',
                        {'relid': self.relid, 'column_name': column, 'lower_bound_overlap': overlap})
+        result = cursor.fetchone()[0]
+        if result:
+            l.debug('Updated freeze column settings.')
+        else:
+            l.debug('Created freeze column settings.')
+        return result
 
     class PartitionResult(object):
         def __init__(self, method, partition_name, rows_moved):
@@ -791,8 +797,7 @@ RETURNING relid,
             raise UsageError('Can not freeze partitions of a table that is not managed.')
         cursor = self.db.connection.cursor()
         parameters = {'schema': self.schema, 'table': self.table}
-        cursor.execute('SELECT partition_table_name, new_constraint FROM rolling_window.freeze(%(schema)s, %(table)s)',
-                       parameters)
+        cursor.execute('SELECT partition_table_name, new_constraint FROM rolling_window.freeze(%(schema)s, %(table)s)', parameters)
         for r in cursor.fetchall():
             p = self.FrozenPartition(r[0], r[1])
             l.debug('Partition %s added constraints %s', p.partition_table_name, p.new_constraint)
@@ -932,9 +937,9 @@ def list(options):
 def freeze_column(options):
     l =getLogger('freeze_column')
     if options.overlap is None:
-        l.debug('Freezing column %s.%s.%s with no overlap')
+        l.debug('Freezing column %s.%s.%s with no overlap', options.schema, options.table, options.column)
     else:
-        l.debug('Freezing column %s.%s.%s with overlap "%s"')
+        l.debug('Freezing column %s.%s.%s with overlap "%s"', options.schema, options.table, options.column, options.overlap)
     t = RollingWindow(options.db, options.schema, options.table)
     t.freeze_column(options.column, options.overlap)
 
@@ -959,10 +964,12 @@ def freeze(options):
         else:
             freeze_table(options.db, options.schema, options.table, options.cluster)
     else:
+        if options.column is not None:
+            l.warn('Freeze column defined, but no table defined. If you want to define freeze options on a column, you must also name the table.')
         l.debug('No table specified. Freeze them all.')
         m = MaintainedTables(options.db)
         for managed_table in m:
-            freeze_table(options.db, managed_table[0], managed_table[1])
+            freeze_table(options.db, managed_table[0], managed_table[1], options.cluster)
 
 ##########################################################################
 def dump_table(db, schema, table, dumper):
