@@ -598,7 +598,6 @@ IS 'Move one partitions worth of data from the parent to a partition table. Move
 ---------------------------------------------------------------------
 CREATE TABLE list_partitions_result (
     partition_table_oid oid,
-    total_relation_size_in_bytes bigint,
     CONSTRAINT no_rows CHECK (partition_table_oid = 0)
 ) INHERITS (pg_catalog.pg_class);
 
@@ -610,8 +609,6 @@ CREATE TABLE list_partitions_result (
 -- What if the procedure for database upgrades is to re-init / add?
 -- I don't like that approach since it demands user interaction.
 
--- TODO: refactor code so total_relation_size_in_bytes is not included
--- call as necessary since this is pretty heavy.
 
 ---------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION list_partitions(
@@ -619,8 +616,7 @@ CREATE OR REPLACE FUNCTION list_partitions(
     parent name
 ) RETURNS SETOF rolling_window.list_partitions_result AS $definition$
 SELECT c.*,
-       c.oid AS partition_table_oid,
-       pg_total_relation_size(c.oid) AS total_relation_size_in_bytes
+       c.oid AS partition_table_oid
 FROM pg_catalog.pg_class c
 WHERE c.oid IN
     (

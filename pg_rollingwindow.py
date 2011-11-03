@@ -734,17 +734,22 @@ RETURNING relid,
                 return cmp(self.estimated_rows, other.estimated_rows)
             return cmp(self.total_relation_size_in_bytes, other.total_relation_size_in_bytes)
 
-    def partitions(self, descending=False):
-        """Provide a list of partitions that are part of this table, including bytesize and estimated rowcount.
+    def partitions(self, descending=False, with_size=False):
+        """Provide a list of partitions that are part of this table,
+        including estimated rowcount and, if requested, the bytesize.
 
         If descending=True then return them in descending order.
+        If with_size=True then include the total_relation_size_in_byte, otherwise set this to None
         """
         #TODO: add only_windows=False option to only return stuff that looks like foo_0000123?
 
         l = getLogger('RollingWindow.list')
         l.debug('Listing %s.%s', self.schema, self.table)
         cursor = self.db.connection.cursor()
-        query = 'SELECT relname, floor(reltuples) AS reltuples, total_relation_size_in_bytes FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname'
+        if with_size:
+            query = 'SELECT relname, floor(reltuples) AS reltuples, pg_total_relation_size(partition_table_oid) AS total_relation_size_in_bytes FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname'
+        else:
+            query = 'SELECT relname, floor(reltuples) AS reltuples, NULL AS total_relation_size_in_bytes FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname'
         if descending:
             query += ' DESCENDING'
         cursor.execute(query, {'schema': self.schema, 'table': self.table})
@@ -914,7 +919,7 @@ def list_table(db, schema, table, verbosity):
     partition_count = 0
     sum_of_estimated_rows = t.parent_estimated_rows
     sum_of_total_relation_size_in_bytes = t.parent_total_relation_size_in_bytes
-    for p in t.partitions():
+    for p in t.partitions(with_size=True):
         partition_count += 1
         sum_of_estimated_rows += p.estimated_rows
         sum_of_total_relation_size_in_bytes += p.total_relation_size_in_bytes
