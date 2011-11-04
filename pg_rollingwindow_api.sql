@@ -490,16 +490,20 @@ BEGIN
             index_is_unique := position('UNIQUE' in index_str);
             index_position := position(attname IN index_str);
 
+            -- we can't cluster on partial indexes
+            CONTINUE WHEN position(' WHERE ' IN index_str) > 0;
+
             -- if we don't have an index, so take the first we get
             IF best_index_name IS NULL
             THEN
                 best_index_name := index_name;
             END IF;
 
-            -- unique indexes are always better
+            -- unique indexes are the best possible
             IF 0 <= index_is_unique
             THEN
                 best_index_name := index_name;
+                EXIT;
             END IF;
 
             -- indexes which mention our partitioning column are better.
