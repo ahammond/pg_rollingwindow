@@ -5,6 +5,8 @@
 -- ./pg_rollingwindow.py freeze -t foo -c rnd
 -- ./pg_rollingwindow.py freeze -t foo -c ts --overlap "'1 day'::interval"
 
+-- TODO: write pgTAP tests.
+
 SET search_path TO public ;
 
 CREATE TABLE foo(

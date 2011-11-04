@@ -442,6 +442,7 @@ DECLARE
     index_str text;
     best_index_name name;
     index_name name;
+    index_is_unique bigint;
     best_index_position bigint;
     index_position bigint;
     alter_str text;
@@ -486,10 +487,17 @@ BEGIN
             index_name := substring(index_str from 1 for position(' ON ' in index_str) - 1);
             -- Chomp off everything up to the column list.
             index_str := substring(index_str from position(' USING (' in index_str) + length(' USING ('));
+            index_is_unique := position('UNIQUE' in index_str);
             index_position := position(attname IN index_str);
 
             -- if we don't have an index, so take the first we get
             IF best_index_name IS NULL
+            THEN
+                best_index_name := index_name;
+            END IF;
+
+            -- unique indexes are always better
+            IF 0 <= index_is_unique
             THEN
                 best_index_name := index_name;
             END IF;
