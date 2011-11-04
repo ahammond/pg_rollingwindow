@@ -841,6 +841,8 @@ BEGIN
         old_upper_bound_length := 1 + length(old_bound_src) - old_upper_bound_start - length('))');
         old_upper_bound := substring(old_bound_src from old_upper_bound_start for old_upper_bound_length);
 
+        CONTINUE WHEN old_upper_bound_start <= 0;   -- this should never happen, but...
+
         -- calculate the new lower bound
         boundary_math :=  'SELECT '
             || old_upper_bound || ' - ' || lower_bound_overlap
