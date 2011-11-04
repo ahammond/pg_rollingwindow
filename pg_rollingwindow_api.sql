@@ -357,6 +357,7 @@ DECLARE
     index_name_str text;
     new_index_name_str text;
     create_index_str text;
+    parent_name_position int;
 BEGIN
     FOR parent_index_str IN EXECUTE index_query_str USING parent_namespace, parent
     LOOP
@@ -396,9 +397,12 @@ BEGIN
         index_name_start := position(' INDEX ' IN parent_index_str) + length(' INDEX ');
         index_name_str := substring(parent_index_str FROM index_name_start);
 
-        IF position(parent IN index_name_str) > 0   -- if the parent name is in the index name.
-        THEN    -- We should replace the parent name with the child name inside the new index's name.
-            new_index_name_str := replace(index_name_str, parent, child);
+        parent_name_position := position(parent IN index_name_str) ;
+        IF parent_name_position > 0   -- if the parent name is in the index name.
+        THEN    -- We should replace the leftmost instance of the parent name with the child name inside the new index's name.
+            new_index_name_str :=  substring(index_name_str from 1 for parent_name_position - 1)
+                || child
+                || substring(index_name_str from parent_name_position + length(parent));
         ELSE    -- We should just give it something reasonable for an index name, so stick the child's name on as a prefix.
             new_index_name_str := child || '_' || index_name_str;
         END IF;
