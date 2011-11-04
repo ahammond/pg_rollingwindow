@@ -810,7 +810,7 @@ BEGIN
     END IF;
 
     SELECT p.partition_table_oid
-        INTO STRICT old_child_relid
+        INTO old_child_relid
         FROM rolling_window.list_partitions(parent_namespace, parent) AS p
         WHERE p.relname = rolling_window.child_name(parent, lower_bound - step);
     IF old_child_relid IS NULL
