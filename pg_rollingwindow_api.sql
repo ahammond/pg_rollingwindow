@@ -947,7 +947,6 @@ DECLARE
     freeze_column name;
     missing_constraint_query_str text;
 BEGIN
-    PERFORM rolling_window.move_data_below_lower_bound_overlap_to_limbo(parent_namespace, parent, lower_bound);
     SELECT c.oid, n.oid
         INTO parent_oid, namespace_oid
         FROM pg_catalog.pg_class c
@@ -1051,6 +1050,7 @@ DECLARE
     new_constraint name;
     f_result rolling_window.freeze_result;
     lower_bound bigint;
+    rows_sent_to_limbo bigint;
 BEGIN
     highest_freezable := rolling_window.highest_freezable(parent_namespace, parent);
     FOR child_relid, child_name IN
@@ -1061,6 +1061,7 @@ BEGIN
         ORDER BY p.relname
     LOOP
         lower_bound := rolling_window.lower_bound_from_child_name(child_name);
+        rows_sent_to_limbo := rolling_window.move_data_below_lower_bound_overlap_to_limbo(parent_namespace, parent, lower_bound);
         FOR new_constraint IN
             SELECT f.p
             FROM rolling_window.freeze_partition(
