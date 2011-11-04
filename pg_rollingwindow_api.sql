@@ -94,7 +94,7 @@ DECLARE
     select_str text;
 BEGIN
     SELECT m.attname, m.step
-        INTO STRICT attname, step
+        INTO attname, step
         FROM rolling_window.maintained_table m
         INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
@@ -129,7 +129,7 @@ DECLARE
     create_str text;
 BEGIN
     SELECT m.attname, m.step
-        INTO STRICT attname, step
+        INTO attname, step
         FROM rolling_window.maintained_table m
         INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
@@ -218,7 +218,7 @@ DECLARE
     step bigint;
 BEGIN
     SELECT m.step
-        INTO STRICT step
+        INTO step
         FROM rolling_window.maintained_table m
         INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
@@ -258,7 +258,7 @@ DECLARE
     child_name name;
 BEGIN
     SELECT m.step, m.attname
-        INTO STRICT step, attname
+        INTO step, attname
         FROM rolling_window.maintained_table m
         INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
@@ -278,7 +278,7 @@ BEGIN
         select_bounds_str := 'SELECT COALESCE(' || quote_nullable(manual_min_str) || ', min(' || quote_ident(attname) || ')), '
             || 'COALESCE(' || quote_nullable(manual_max_str) || ', max(' || quote_ident(attname)
             || ')) FROM ONLY ' || quote_ident(parent_namespace) || '.' || quote_ident(parent);
-        EXECUTE select_bounds_str INTO STRICT min_value, max_value;
+        EXECUTE select_bounds_str INTO min_value, max_value;
         IF min_value IS NULL OR max_value IS NULL
         THEN
             min_value := -1;
@@ -452,7 +452,7 @@ DECLARE
     alter_str text;
 BEGIN
     SELECT m.attname, m.step
-        INTO STRICT attname, step
+        INTO attname, step
         FROM rolling_window.maintained_table m
         INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
@@ -556,7 +556,7 @@ DECLARE
     lower_bound bigint;
 BEGIN
     SELECT m.attname, m.step
-        INTO STRICT attname, step
+        INTO attname, step
         FROM rolling_window.maintained_table m
         INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
@@ -564,7 +564,7 @@ BEGIN
           AND n.nspname = parent_namespace;
     select_max_value_str := 'SELECT max(' || quote_ident(attname)
         || ') FROM ONLY ' || quote_ident(parent_namespace) || '.' || quote_ident(parent);
-    EXECUTE select_max_value_str INTO STRICT max_value;
+    EXECUTE select_max_value_str INTO max_value;
     IF max_value IS NULL
     THEN
         RETURN 0;
@@ -591,7 +591,7 @@ DECLARE
     select_min_value_str text;
 BEGIN
     SELECT m.attname, m.step
-        INTO STRICT attname, step
+        INTO attname, step
         FROM rolling_window.maintained_table m
         INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
@@ -599,7 +599,7 @@ BEGIN
           AND n.nspname = parent_namespace;
     select_min_value_str := 'SELECT min(' || quote_ident(attname)
         || ') FROM ONLY ' || quote_ident(parent_namespace) || '.' || quote_ident(parent);
-    EXECUTE select_min_value_str INTO STRICT min_value;
+    EXECUTE select_min_value_str INTO min_value;
     IF min_value IS NULL
     THEN
         RETURN 0;
@@ -666,7 +666,7 @@ DECLARE
     current_reserve_partitions bigint := 0;
 BEGIN
     SELECT m.step, m.reserve_partitions_to_keep
-        INTO STRICT step, reserve_partitions_to_keep
+        INTO step, reserve_partitions_to_keep
         FROM rolling_window.maintained_table m
         INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
@@ -729,7 +729,7 @@ DECLARE
     t_result rolling_window.trim_result;
 BEGIN
     SELECT m.non_empty_partitions_to_keep
-        INTO STRICT non_empty_partitions_to_keep
+        INTO non_empty_partitions_to_keep
         FROM rolling_window.maintained_table m
         INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
@@ -797,7 +797,7 @@ DECLARE
     delete_count bigint;
 BEGIN
     SELECT m.relid, m.step
-        INTO STRICT parent_relid, step
+        INTO parent_relid, step
         FROM rolling_window.maintained_table m
         INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
@@ -833,7 +833,7 @@ BEGIN
 
         -- find the old_child's bound_foo constraint, if any
         SELECT c.consrc
-            INTO STRICT old_bound_src
+            INTO old_bound_src
             FROM pg_catalog.pg_constraint c
             WHERE conname = 'bound_' || constrained_column
               AND conrelid = old_child_relid;
@@ -915,7 +915,7 @@ BEGIN
     find_bounds_sql := 'SELECT CAST(min(' || quote_ident(column_to_be_constrained) || ') AS text) AS lower_bound, '
         || 'CAST(max(' || quote_ident(column_to_be_constrained) || ') AS text) AS upper_bound '
         || 'FROM ' || quote_ident(parent_namespace) || '.' || quote_ident(child);
-    EXECUTE find_bounds_sql INTO STRICT constraint_lower_bound_as_text, constraint_upper_bound_as_text;
+    EXECUTE find_bounds_sql INTO constraint_lower_bound_as_text, constraint_upper_bound_as_text;
     IF constraint_upper_bound_as_text IS NULL
     THEN
         RAISE EXCEPTION 'max(%) is NULL. Is the table empty, or does it have any non-null values in the column to be constrained?', column_to_be_constrained;
@@ -949,13 +949,13 @@ DECLARE
 BEGIN
     PERFORM rolling_window.move_data_below_lower_bound_overlap_to_limbo(parent_namespace, parent, lower_bound);
     SELECT c.oid, n.oid
-        INTO STRICT parent_oid, namespace_oid
+        INTO parent_oid, namespace_oid
         FROM pg_catalog.pg_class c
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
         WHERE c.relname = parent
         AND n.nspname = parent_namespace;
     SELECT c.oid
-        INTO STRICT child_oid
+        INTO child_oid
         FROM pg_catalog.pg_class c
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
         WHERE c.relname = rolling_window.child_name(parent, lower_bound)
@@ -993,7 +993,7 @@ DECLARE
     non_empty_partitions bigint := 0;
 BEGIN
     SELECT m.data_lag_window
-        INTO STRICT data_lag_window
+        INTO data_lag_window
         FROM rolling_window.maintained_table m
         INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
