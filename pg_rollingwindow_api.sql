@@ -1106,3 +1106,69 @@ END;
 $definition$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION set_freeze_column(oid, name, text)
 IS 'Set a freeze column. Returns true if UPDATEd, false if INSERTed. This would be a single call to MERGE if PostgreSQL supported it.';
+
+
+---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION unconstrain_column(
+    parent_namespace name,
+    parent name,
+    lower_bound bigint,
+    column_to_be_constrained name
+) RETURNS name AS $definition$
+DECLARE
+    child name;
+    name_of_constraint name;
+    constraint_sql text;
+BEGIN
+    child := rolling_window.child_name(parent, lower_bound);
+    name_of_constraint := 'bound_' || column_to_be_constrained;
+    constraint_sql := 'ALTER TABLE ' ||  quote_ident(parent_namespace) || '.' || quote_ident(child)
+        || ' DROP CONSTRAINT IF EXISTS ' || quote_ident(name_of_constraint);
+    EXECUTE constraint_sql;
+    RETURN name_of_constraint;
+END;
+$definition$ LANGUAGE plpgsql;
+COMMENT ON FUNCTION unconstrain_column(name, name, bigint, name)
+IS 'Remove the constraint from constrained_column in the partition.';
+
+
+---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION unfreeze_column(
+    parent_namespace name,
+    parent name,
+    my_column name
+) RETURNS SETOF freeze_result AS $definition$
+DECLARE
+    child_relid oid;
+    child_name name;
+    removed_constraint name;
+    f_result rolling_window.freeze_result;
+    lower_bound bigint;
+BEGIN
+    FOR child_relid, child_name IN
+        SELECT p.partition_table_oid, p.relname
+        FROM rolling_window.list_partitions(parent_namespace, parent) AS p
+        WHERE p.relname ~ (parent || E'_\\d+$')
+        ORDER BY p.relname
+    LOOP
+        lower_bound := rolling_window.lower_bound_from_child_name(child_name);
+        FOR removed_constraint IN
+            SELECT f.p
+            FROM rolling_window.unconstrain_column(
+                parent_namespace,
+                parent,
+                lower_bound,
+                my_column)
+            AS f(p)
+        LOOP
+            f_result = ROW(child_name, removed_constraint);
+            RETURN NEXT f_result;
+        END LOOP;
+    END LOOP;
+END;
+$definition$ LANGUAGE plpgsql;
+COMMENT ON FUNCTION unfreeze_column(name, name, name)
+IS 'Remove boundary constraints for all columns ';
+
+
+
