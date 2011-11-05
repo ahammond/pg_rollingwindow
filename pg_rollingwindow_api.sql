@@ -945,7 +945,17 @@ DECLARE
     child_oid oid;
     namespace_oid oid;
     freeze_column name;
-    missing_constraint_query_str text;
+    missing_constraint_query_str text := $q$
+        SELECT ctf.column_name
+        FROM rolling_window.columns_to_freeze ctf
+        WHERE ctf.relid = $1    -- parent oid
+        EXCEPT
+        SELECT substr(c.conname, 7)
+        FROM pg_catalog.pg_constraint c
+        WHERE c.connamespace = $2   -- namespace oid
+          AND c.conrelid = $3       -- child oid
+          AND substr(c.conname, 1, 6) = 'bound_'
+    $q$;
 BEGIN
     SELECT c.oid, n.oid
         INTO parent_oid, namespace_oid
@@ -959,17 +969,6 @@ BEGIN
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
         WHERE c.relname = rolling_window.child_name(parent, lower_bound)
           AND n.nspname = parent_namespace;
-    missing_constraint_query_str := $q$
-        SELECT ctf.column_name
-        FROM rolling_window.columns_to_freeze ctf
-        WHERE ctf.relid = $1    -- parent oid
-        EXCEPT
-        SELECT substr(c.conname, 7)
-        FROM pg_catalog.pg_constraint c
-        WHERE c.connamespace = $2   -- namespace oid
-          AND c.conrelid = $3       -- child oid
-          AND substr(c.conname, 1, 6) = 'bound_'
-    $q$;
     FOR freeze_column IN EXECUTE missing_constraint_query_str USING parent_oid, namespace_oid, child_oid
     LOOP
         RETURN NEXT rolling_window.constrain_partition(parent_namespace, parent, lower_bound, freeze_column);
