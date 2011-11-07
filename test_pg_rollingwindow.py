@@ -356,7 +356,67 @@ RETURNING relid,
         method_calls = self.mock_cursor.return_value.method_calls
         n = 0
         self.assertEqual('execute', method_calls[n][0])     # list_partitions
-        self.assertEqual(('SELECT relname, floor(reltuples) AS reltuples, total_relation_size_in_bytes FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname',
+        self.assertEqual(('SELECT relname, floor(reltuples) AS reltuples, NULL AS total_relation_size_in_bytes FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname',
+                       {'schema': 'fake_schema', 'table': 'fake_table'}), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('fetchall', method_calls[n][0])
+        self.assertEqual((), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual(n, len(method_calls))
+
+    def test_partitions_descending(self):
+        expected_results = [('t1', 234.23, 230948),('t2', 0, 0),('t3', 12309, 2309840)]
+        self.fetch_queue = [copy.deepcopy(expected_results)]
+        for p in self.target.partitions(descending=True):
+            expected_tuple = expected_results.pop(0)
+            expected_partition = pg_rollingwindow.RollingWindow.Partition(*expected_tuple)
+            self.assertEqual(expected_partition, p)
+        method_calls = self.mock_cursor.return_value.method_calls
+        n = 0
+        self.assertEqual('execute', method_calls[n][0])     # list_partitions
+        self.assertEqual(('SELECT relname, floor(reltuples) AS reltuples, NULL AS total_relation_size_in_bytes FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname DESCENDING',
+                       {'schema': 'fake_schema', 'table': 'fake_table'}), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('fetchall', method_calls[n][0])
+        self.assertEqual((), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual(n, len(method_calls))
+
+    def test_partitions_with_size(self):
+        expected_results = [('t1', 234.23, 230948),('t2', 0, 0),('t3', 12309, 2309840)]
+        self.fetch_queue = [copy.deepcopy(expected_results)]
+        for p in self.target.partitions(with_size=True):
+            expected_tuple = expected_results.pop(0)
+            expected_partition = pg_rollingwindow.RollingWindow.Partition(*expected_tuple)
+            self.assertEqual(expected_partition, p)
+        method_calls = self.mock_cursor.return_value.method_calls
+        n = 0
+        self.assertEqual('execute', method_calls[n][0])     # list_partitions
+        self.assertEqual(('SELECT relname, floor(reltuples) AS reltuples, pg_total_relation_size(partition_table_oid) AS total_relation_size_in_bytes FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname',
+                       {'schema': 'fake_schema', 'table': 'fake_table'}), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('fetchall', method_calls[n][0])
+        self.assertEqual((), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual(n, len(method_calls))
+
+    def test_partitions_with_size_descending(self):
+        expected_results = [('t1', 234.23, 230948),('t2', 0, 0),('t3', 12309, 2309840)]
+        self.fetch_queue = [copy.deepcopy(expected_results)]
+        for p in self.target.partitions(with_size=True, descending=True):
+            expected_tuple = expected_results.pop(0)
+            expected_partition = pg_rollingwindow.RollingWindow.Partition(*expected_tuple)
+            self.assertEqual(expected_partition, p)
+        method_calls = self.mock_cursor.return_value.method_calls
+        n = 0
+        self.assertEqual('execute', method_calls[n][0])     # list_partitions
+        self.assertEqual(('SELECT relname, floor(reltuples) AS reltuples, pg_total_relation_size(partition_table_oid) AS total_relation_size_in_bytes FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname DESCENDING',
                        {'schema': 'fake_schema', 'table': 'fake_table'}), method_calls[n][1])
         self.assertEqual({}, method_calls[n][2])
         n += 1
