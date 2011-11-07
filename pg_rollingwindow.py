@@ -239,24 +239,24 @@ class PartitionDumper(PgToolCaller):
 
         if highest_freezable is not None:
             for p in r.partitions():
-                l.debug('Considering %s for eligibility', p.child_name)
-                if p.child_name.endswith('_limbo'):
+                l.debug('Considering %s for eligibility', p.partition_table_name)
+                if p.partition_table_name.endswith('_limbo'):
                     l.debug('Skipping limbo partition')
                     continue
-                match = self.partition_pattern(r).match(p.child_name)
+                match = self.partition_pattern(r).match(p.partition_table_name)
                 if match is None:
-                    l.warning('Skipping strange partition: %s', p.child_name)
+                    l.warning('Skipping strange partition: %s', p.partition_table_name)
                     continue
                 partition_number = int(match.group('number'))
                 if partition_number <= r.last_partition_dumped:
-                    l.debug('I think I already dumped %s since %d is less than %d', p.child_name, partition_number, r.last_partition_dumped)
+                    l.debug('I think I already dumped %s since %d is less than %d', p.partition_table_name, partition_number, r.last_partition_dumped)
                     continue
-                if p.child_name > highest_freezable:      # we can get away with a string comparison since 0 padding of child names
-                    l.debug('%s is higher than %s, so we have dumped all the freezable tables.', p.child_name, highest_freezable)
+                if p.partition_table_name > highest_freezable:      # we can get away with a string comparison since 0 padding of child names
+                    l.debug('%s is higher than %s, so we have dumped all the freezable tables.', p.partition_table_name, highest_freezable)
                     break
                 #TODO: what about checking to see if a dumpfile or partial already exists? (no clobber)
-                l.debug('%s looks eligible', p.child_name)
-                yield self.EligiblePartition(p.child_name, schema_only=False)
+                l.debug('%s looks eligible', p.partition_table_name)
+                yield self.EligiblePartition(p.partition_table_name, schema_only=False)
                 #TODO: would it be better to fork these off in parallel?
                 # That would make keeping track of last_partition_dumped a little trickier. What if one fails?
                 # I think the solution will involve parallel pg_dump, which should be in pg 9.2. So, hold off until then.
@@ -297,7 +297,7 @@ class PartitionDumper(PgToolCaller):
         partition_pattern = self.partition_pattern(r)
         already_loaded_list = []
         for p in r.partitions():
-            m = partition_pattern.match(p.child_name)
+            m = partition_pattern.match(p.partition_table_name)
             if m:
                 already_loaded_list.append(int(m.group('number')))
         already_loaded_partition_numbers = frozenset(already_loaded_list)
@@ -722,14 +722,14 @@ RETURNING relid,
         self._rolled_on = cursor.fetchone()[0]
 
     class Partition(object):
-        def __init__(self, child_name, estimated_rows, total_relation_size_in_bytes):
-            self.child_name = child_name
+        def __init__(self, partition_table_name, estimated_rows, total_relation_size_in_bytes):
+            self.partition_table_name = partition_table_name
             self.estimated_rows = estimated_rows
             self.total_relation_size_in_bytes = total_relation_size_in_bytes
 
         def __cmp__(self, other):
-            if self.child_name != other.child_name:
-                return cmp(self.child_name, other.child_name)
+            if self.partition_table_name != other.partition_table_name:
+                return cmp(self.partition_table_name, other.partition_table_name)
             if self.estimated_rows != other.estimated_rows:
                 return cmp(self.estimated_rows, other.estimated_rows)
             return cmp(self.total_relation_size_in_bytes, other.total_relation_size_in_bytes)
@@ -757,26 +757,21 @@ RETURNING relid,
             p = self.Partition(*r)
             l.debug('%s.%s has partition %s with approximately %s rows at %s bytes',
                     self.schema, self.table,
-                    p.child_name, p.estimated_rows, p.total_relation_size_in_bytes)
+                    p.partition_table_name, p.estimated_rows, p.total_relation_size_in_bytes)
             yield p
 
     class FrozenPartition(object):
         def __init__(self, partition_table_name, new_constraint):
-            self._partition_table_name = partition_table_name
-            self._new_constraint = new_constraint
-
-        @property
-        def partition_table_name(self):
-            return self._partition_table_name
-
-        @property
-        def new_constraint(self):
-            return self._new_constraint
+            self.partition_table_name = partition_table_name
+            self.new_constraint = new_constraint
 
         def __cmp__(self, other):
             if self.partition_table_name != other.partition_table_name:
                 return cmp(self.partition_table_name, other.partition_table_name)
             return cmp(self.new_constraint, other.new_constraint)
+
+        def __repr__(self):
+            return '<FrozenPartition: %s.%s>' % (self.partition_table_name, self.new_constraint)
 
     @property
     def highest_freezable(self):
@@ -924,7 +919,7 @@ def list_table(db, schema, table, verbosity):
         sum_of_estimated_rows += p.estimated_rows
         sum_of_total_relation_size_in_bytes += p.total_relation_size_in_bytes
         if verbosity > 2:
-            print '  %s: %s with about %d rows.' % (p.child_name, bytes_to_human(p.total_relation_size_in_bytes), p.estimated_rows)
+            print '  %s: %s with about %d rows.' % (p.partition_table_name, bytes_to_human(p.total_relation_size_in_bytes), p.estimated_rows)
     print 'Total of %d partitions consuming %s with a total of about %d rows.' % (partition_count, bytes_to_human(sum_of_total_relation_size_in_bytes), sum_of_estimated_rows)
 
 ##########################################################################
