@@ -46,18 +46,27 @@ Python unit testing (developers only)
  - Mock (http://www.voidspace.org.uk/python/mock/)
 
 INSTALLATION
-psql -f pg_rollingwindow_api.sql
-# This will create the rolling_window schema in your database.
 
-pg_rollingwindow.py add -t table -c transaction_id -s 10000 -r 5000 -a 300 -f tstamp
-pg_rollingwindow.py roll
+export PGHOST=localhost
+export PGDATABASE=testdb
+
+From your checkout directory,
+
+pg_rollingwindow.py init
+
+Then for tables that you want to manage,
+pg_rollingwindow.py add -t tbl -c id -s 10000 -r 5000 -a 300 -
+
+And for columns you'd like to freeze within those tables
+pg_rollingwindow.py freeze -t tbl -c rnd
+pg_rollingwindow.py freeze -t tbl -c tstmp --overlap "'2 days'::interval"
 
 BASIC USAGE
 Create a cron job that regularly runs
 
 pg_rollingwindow.py roll
 
-And, if it fits your data's behavior,
+And, if you have specified any freeze columns,
 
 pg_rollingwindow.py freeze
 
