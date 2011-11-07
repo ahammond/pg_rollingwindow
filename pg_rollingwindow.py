@@ -370,6 +370,44 @@ class PartitionDumper(PgToolCaller):
             already_returned.append(r)
             yield r
 
+
+##########################################################################
+class PartitionResult(object):
+    def __init__(self, method, partition_name, rows_moved):
+        self.method = method
+        self.partition_name = partition_name
+        self.rows_moved = rows_moved
+
+
+##########################################################################
+class Partition(object):
+    def __init__(self, partition_table_name, estimated_rows, total_relation_size_in_bytes):
+        self.partition_table_name = partition_table_name
+        self.estimated_rows = estimated_rows
+        self.total_relation_size_in_bytes = total_relation_size_in_bytes
+
+    def __cmp__(self, other):
+        if self.partition_table_name != other.partition_table_name:
+            return cmp(self.partition_table_name, other.partition_table_name)
+        if self.estimated_rows != other.estimated_rows:
+            return cmp(self.estimated_rows, other.estimated_rows)
+        return cmp(self.total_relation_size_in_bytes, other.total_relation_size_in_bytes)
+
+
+##########################################################################
+class FrozenPartition(object):
+    def __init__(self, partition_table_name, new_constraint):
+        self.partition_table_name = partition_table_name
+        self.new_constraint = new_constraint
+
+    def __cmp__(self, other):
+        if self.partition_table_name != other.partition_table_name:
+            return cmp(self.partition_table_name, other.partition_table_name)
+        return cmp(self.new_constraint, other.new_constraint)
+
+    def __repr__(self):
+        return '<FrozenPartition: %s.%s>' % (self.partition_table_name, self.new_constraint)
+
 ##########################################################################
 class RollingWindow(object):
     """Encapsulate handling of a table and it's partitions.
@@ -603,12 +641,6 @@ RETURNING relid,
             l.debug('Created freeze column settings.')
         return result
 
-    class PartitionResult(object):
-        def __init__(self, method, partition_name, rows_moved):
-            self.method = method
-            self.partition_name = partition_name
-            self.rows_moved = rows_moved
-
     def partition(self, clone_indexes=True, vacuum_parent_after_every=0):
         """Partition this table by creating partitions to cover the entire span of data in the table and then moving data into the partitions.
 
@@ -638,7 +670,7 @@ RETURNING relid,
                 parameters = {'schema': self.schema, 'table': self.table}
                 l.debug('Running VACUUM FULL on %(schema)s.%(table)s' % parameters)
                 cursor.execute('VACUUM FULL %(schema)s.%(table)s' % parameters)     # Is there a polite way to get these identifiers quoted?
-            yield self.PartitionResult(self.CREATED, partition_created, rows_moved)
+            yield PartitionResult(self.CREATED, partition_created, rows_moved)
         # Handle any data left lurking in the parent table.
         cursor.execute('SELECT min_value, max_value, step FROM rolling_window.min_max_in_parent_only(%(schema)s, %(table)s)',
                        {'schema': self.schema, 'table': self.table})
@@ -671,7 +703,7 @@ RETURNING relid,
                     parameters = {'schema': self.schema, 'table': self.table}
                     l.debug('Running VACUUM FULL on %(schema)s.%(table)s' % parameters)
                     cursor.execute('VACUUM FULL %(schema)s.%(table)s' % parameters)
-                yield self.PartitionResult(self.MOVED, partition, rows_moved)
+                yield PartitionResult(self.MOVED, partition, rows_moved)
 
     def roll(self, vacuum_parent_after_every=0):
         """Perform standard maintenance on a maintained table.
@@ -721,19 +753,6 @@ RETURNING relid,
                        {'relid': self.relid})
         self._rolled_on = cursor.fetchone()[0]
 
-    class Partition(object):
-        def __init__(self, partition_table_name, estimated_rows, total_relation_size_in_bytes):
-            self.partition_table_name = partition_table_name
-            self.estimated_rows = estimated_rows
-            self.total_relation_size_in_bytes = total_relation_size_in_bytes
-
-        def __cmp__(self, other):
-            if self.partition_table_name != other.partition_table_name:
-                return cmp(self.partition_table_name, other.partition_table_name)
-            if self.estimated_rows != other.estimated_rows:
-                return cmp(self.estimated_rows, other.estimated_rows)
-            return cmp(self.total_relation_size_in_bytes, other.total_relation_size_in_bytes)
-
     def partitions(self, descending=False, with_size=False):
         """Provide a list of partitions that are part of this table,
         including estimated rowcount and, if requested, the bytesize.
@@ -754,24 +773,11 @@ RETURNING relid,
             query += ' DESCENDING'
         cursor.execute(query, {'schema': self.schema, 'table': self.table})
         for r in cursor.fetchall():
-            p = self.Partition(*r)
+            p = Partition(*r)
             l.debug('%s.%s has partition %s with approximately %s rows at %s bytes',
                     self.schema, self.table,
                     p.partition_table_name, p.estimated_rows, p.total_relation_size_in_bytes)
             yield p
-
-    class FrozenPartition(object):
-        def __init__(self, partition_table_name, new_constraint):
-            self.partition_table_name = partition_table_name
-            self.new_constraint = new_constraint
-
-        def __cmp__(self, other):
-            if self.partition_table_name != other.partition_table_name:
-                return cmp(self.partition_table_name, other.partition_table_name)
-            return cmp(self.new_constraint, other.new_constraint)
-
-        def __repr__(self):
-            return '<FrozenPartition: %s.%s>' % (self.partition_table_name, self.new_constraint)
 
     @property
     def highest_freezable(self):

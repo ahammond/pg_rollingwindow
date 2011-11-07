@@ -351,7 +351,7 @@ RETURNING relid,
         self.fetch_queue = [copy.deepcopy(expected_results)]
         for p in self.target.partitions():
             expected_tuple = expected_results.pop(0)
-            expected_partition = pg_rollingwindow.RollingWindow.Partition(*expected_tuple)
+            expected_partition = pg_rollingwindow.Partition(*expected_tuple)
             self.assertEqual(expected_partition, p)
         method_calls = self.mock_cursor.return_value.method_calls
         n = 0
@@ -371,7 +371,7 @@ RETURNING relid,
         self.fetch_queue = [copy.deepcopy(expected_results)]
         for p in self.target.partitions(descending=True):
             expected_tuple = expected_results.pop(0)
-            expected_partition = pg_rollingwindow.RollingWindow.Partition(*expected_tuple)
+            expected_partition = pg_rollingwindow.Partition(*expected_tuple)
             self.assertEqual(expected_partition, p)
         method_calls = self.mock_cursor.return_value.method_calls
         n = 0
@@ -391,7 +391,7 @@ RETURNING relid,
         self.fetch_queue = [copy.deepcopy(expected_results)]
         for p in self.target.partitions(with_size=True):
             expected_tuple = expected_results.pop(0)
-            expected_partition = pg_rollingwindow.RollingWindow.Partition(*expected_tuple)
+            expected_partition = pg_rollingwindow.Partition(*expected_tuple)
             self.assertEqual(expected_partition, p)
         method_calls = self.mock_cursor.return_value.method_calls
         n = 0
@@ -411,7 +411,7 @@ RETURNING relid,
         self.fetch_queue = [copy.deepcopy(expected_results)]
         for p in self.target.partitions(with_size=True, descending=True):
             expected_tuple = expected_results.pop(0)
-            expected_partition = pg_rollingwindow.RollingWindow.Partition(*expected_tuple)
+            expected_partition = pg_rollingwindow.Partition(*expected_tuple)
             self.assertEqual(expected_partition, p)
         method_calls = self.mock_cursor.return_value.method_calls
         n = 0
@@ -563,17 +563,17 @@ class TestPartitionDumper(OptionBase):
 
     def postSetUpPreRun(self):
         _partitions = [
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000000', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000010', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000020', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000030', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000040', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000050', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000060', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000070', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000080', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000090', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_limbo', 10, 10),
+                pg_rollingwindow.Partition('fake_table_0000000000000000000', 10, 10),
+                pg_rollingwindow.Partition('fake_table_0000000000000000010', 10, 10),
+                pg_rollingwindow.Partition('fake_table_0000000000000000020', 10, 10),
+                pg_rollingwindow.Partition('fake_table_0000000000000000030', 10, 10),
+                pg_rollingwindow.Partition('fake_table_0000000000000000040', 10, 10),
+                pg_rollingwindow.Partition('fake_table_0000000000000000050', 10, 10),
+                pg_rollingwindow.Partition('fake_table_0000000000000000060', 10, 10),
+                pg_rollingwindow.Partition('fake_table_0000000000000000070', 10, 10),
+                pg_rollingwindow.Partition('fake_table_0000000000000000080', 10, 10),
+                pg_rollingwindow.Partition('fake_table_0000000000000000090', 10, 10),
+                pg_rollingwindow.Partition('fake_table_limbo', 10, 10),
             ]
         _list_dir = [
                 'fake_schema.fake_table.pgdump',            # the parent table
@@ -835,9 +835,9 @@ class TestPartitionDumper(OptionBase):
         o = dict(database='fake_db', host='fake_host', port='fake_port', dump_directory='fake_dumpdir', pg_path='fake_path')
         self.runner(o)
         _partitions = [
-                pg_rollingwindow.RollingWindow.Partition('a_weird_partition', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000000', 10, 10),
-                pg_rollingwindow.RollingWindow.Partition('fake_table_0000000000000000010', 10, 10),
+                pg_rollingwindow.Partition('a_weird_partition', 10, 10),
+                pg_rollingwindow.Partition('fake_table_0000000000000000000', 10, 10),
+                pg_rollingwindow.Partition('fake_table_0000000000000000010', 10, 10),
         ]
         self.mock_RollingWindow.partitions.return_value.__iter__.return_value = iter(_partitions)
         self.mock_RollingWindow.last_partition_dumped = 0
