@@ -433,7 +433,9 @@ RETURNING relid,
         self.fetch_queue = self.standard_fetch_results + [
                 ('partition_2',),                           # highest_freezable
                 [('partition_1', 1234, None), ('partition_2', 1234, None)],   # partitions
+                ('4312'),                                   # moved to limbo
                 [('c1',), ('c2',)],                         # freeze partition_1
+                ('6345'),                                   # moved to limbo
                 [('c3',)],                                  # freeze partition_2
             ]
 
@@ -463,11 +465,29 @@ RETURNING relid,
         self.assertEqual({}, method_calls[n][2])
         n += 1
         self.assertEqual('execute', method_calls[n][0])
+        self.assertEqual(('SELECT rolling_window.move_data_below_lower_bound_overlap_to_limbo(%(schema)s, %(table)s, %(lower_bound)s) AS data_moved_to_limbo',
+            {'schema': 'fake_schema', 'table': 'fake_table', 'lower_bound': 1}), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('fetchone', method_calls[n][0])
+        self.assertEqual((), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('execute', method_calls[n][0])
         self.assertEqual(('SELECT f.c AS new_constraint FROM rolling_window.freeze_partition(%(schema)s, %(table)s, %(lower_bound)s) AS f(c)',
             {'schema': 'fake_schema', 'table': 'fake_table', 'lower_bound': 1}), method_calls[n][1])
         self.assertEqual({}, method_calls[n][2])
         n += 1
         self.assertEqual('fetchall', method_calls[n][0])
+        self.assertEqual((), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('execute', method_calls[n][0])
+        self.assertEqual(('SELECT rolling_window.move_data_below_lower_bound_overlap_to_limbo(%(schema)s, %(table)s, %(lower_bound)s) AS data_moved_to_limbo',
+            {'schema': 'fake_schema', 'table': 'fake_table', 'lower_bound': 2}), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('fetchone', method_calls[n][0])
         self.assertEqual((), method_calls[n][1])
         self.assertEqual({}, method_calls[n][2])
         n += 1

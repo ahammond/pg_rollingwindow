@@ -824,8 +824,11 @@ RETURNING relid,
             if p.partition_table_name > h:
                 l.debug('Highest freezable is %s. Stopping.', h)
                 break
-            cursor.execute('SELECT f.c AS new_constraint FROM rolling_window.freeze_partition(%(schema)s, %(table)s, %(lower_bound)s) AS f(c)',
-                {'schema': self.schema, 'table': self.table, 'lower_bound': p.lower_bound})
+            parameters = {'schema': self.schema, 'table': self.table, 'lower_bound': p.lower_bound}
+            cursor.execute('SELECT rolling_window.move_data_below_lower_bound_overlap_to_limbo(%(schema)s, %(table)s, %(lower_bound)s) AS data_moved_to_limbo', parameters)
+            data_moved_to_limbo = cursor.fetchone()[0]
+            l.debug('Partition %s.%s moved %d rows to limbo', self.schema, self.table, data_moved_to_limbo)
+            cursor.execute('SELECT f.c AS new_constraint FROM rolling_window.freeze_partition(%(schema)s, %(table)s, %(lower_bound)s) AS f(c)', parameters)
             for r in cursor.fetchall():
                 f = FrozenPartition(partition_table_name=p.partition_table_name, new_constraint=r[0])
                 l.debug('Partition %s added constraints %s', p.partition_table_name, f.new_constraint)
