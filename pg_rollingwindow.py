@@ -373,18 +373,29 @@ class PartitionDumper(PgToolCaller):
 
 ##########################################################################
 class PartitionResult(object):
-    def __init__(self, method, partition_name, rows_moved):
+    def __init__(self, method, partition_table_name, rows_moved):
         self.method = method
-        self.partition_name = partition_name
+        self.partition_name = partition_table_name
         self.rows_moved = rows_moved
 
 
 ##########################################################################
 class Partition(object):
+    R_PARTITION = re.compile(r'^(?P<parent_name>.*)_(?:(?P<lower_bound>\d+)|(?P<is_limbo>limbo))$')
+
     def __init__(self, partition_table_name, estimated_rows, total_relation_size_in_bytes):
         self.partition_table_name = partition_table_name
         self.estimated_rows = estimated_rows
         self.total_relation_size_in_bytes = total_relation_size_in_bytes
+        m = self.R_PARTITION.match(partition_table_name)
+        self.lower_bound = None
+        self.is_limbo = False
+        if not m:
+            return
+        if m.group('is_limbo') == 'limbo':
+            self.is_limbo = True
+            return
+        self.lower_bound = int(m.group('lower_bound'))
 
     def __cmp__(self, other):
         if self.partition_table_name != other.partition_table_name:
@@ -406,7 +417,7 @@ class FrozenPartition(object):
         return cmp(self.new_constraint, other.new_constraint)
 
     def __repr__(self):
-        return '<FrozenPartition: %s.%s>' % (self.partition_table_name, self.new_constraint)
+        return 'FrozenPartition(%s, %s)' % (self.partition_table_name, self.new_constraint)
 
 ##########################################################################
 class RollingWindow(object):
@@ -785,10 +796,12 @@ RETURNING relid,
         if not self.is_managed:
             raise UsageError('Can not determine highest freezeable partition of a table that is not managed.')
         cursor = self.db.connection.cursor()
+        l.debug('Getting highest_freezable for %s.%s', self.schema, self.table)
         cursor.execute('SELECT rolling_window.highest_freezable(%(schema)s, %(table)s)',
              {'schema': self.schema, 'table': self.table})
-        r = cursor.fetchone()
-        return r[0]
+        r = cursor.fetchone()[0]
+        l.debug('Got highest_freezable: %s', r)
+        return r
 
     def freeze(self, cluster=False):
         """For all but the highest non-empty partition, add a min/max bound constraint for each freeze_column.
@@ -802,15 +815,24 @@ RETURNING relid,
         if not self.is_managed:
             raise UsageError('Can not freeze partitions of a table that is not managed.')
         cursor = self.db.connection.cursor()
-        parameters = {'schema': self.schema, 'table': self.table}
-        cursor.execute('SELECT partition_table_name, new_constraint FROM rolling_window.freeze(%(schema)s, %(table)s)', parameters)
-        for r in cursor.fetchall():
-            p = self.FrozenPartition(r[0], r[1])
-            l.debug('Partition %s added constraints %s', p.partition_table_name, p.new_constraint)
-            yield p
-        if cluster:
-            l.debug('Clustering %s.%s', self.schema, self.table)
-            cursor.execute('CLUSTER %(schema)s.%(table)s' % parameters)
+        h = self.highest_freezable
+        for p in self.partitions():
+            l.debug('Considering %s.%s for freezing.', self.schema, p.partition_table_name)
+            if p.is_limbo or p.lower_bound is None:
+                l.debug('Skipping partition %s.%s since is_limbo or no lower_bound.', self.schema, p.partition_table_name)
+                continue
+            if p.partition_table_name > h:
+                l.debug('Highest freezable is %s. Stopping.', h)
+                break
+            cursor.execute('SELECT f.c AS new_constraint FROM rolling_window.freeze_partition(%(schema)s, %(table)s, %(lower_bound)s) AS f(c)',
+                {'schema': self.schema, 'table': self.table, 'lower_bound': p.lower_bound})
+            for r in cursor.fetchall():
+                f = FrozenPartition(partition_table_name=p.partition_table_name, new_constraint=r[0])
+                l.debug('Partition %s added constraints %s', p.partition_table_name, f.new_constraint)
+                yield f
+            if cluster:
+                l.debug('Clustering %s.%s', self.schema, p.partition_table_name)
+                cursor.execute('CLUSTER %(schema)s.%(table)s' % {'schema': self.schema, 'table': p.partition_table_name})
 
     def update_insert_rule(self):
         raise NotImplementedError('Management of insert rules on the parent is not implemented, yet. Wanna write it?')

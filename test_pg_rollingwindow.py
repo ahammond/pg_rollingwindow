@@ -347,7 +347,7 @@ RETURNING relid,
         self.assertEqual(n, len(method_calls))  # make sure we have covered all the calls
 
     def test_partitions(self):
-        expected_results = [('t1', 234.23, 230948),('t2', 0, 0),('t3', 12309, 2309840)]
+        expected_results = [('t1', 234.23, None),('t2', 0, None),('t3', 12309, None)]
         self.fetch_queue = [copy.deepcopy(expected_results)]
         for p in self.target.partitions():
             expected_tuple = expected_results.pop(0)
@@ -367,7 +367,7 @@ RETURNING relid,
         self.assertEqual(n, len(method_calls))
 
     def test_partitions_descending(self):
-        expected_results = [('t1', 234.23, 230948),('t2', 0, 0),('t3', 12309, 2309840)]
+        expected_results = [('t1', 234.23, None),('t2', 0, None),('t3', 12309, None)]
         self.fetch_queue = [copy.deepcopy(expected_results)]
         for p in self.target.partitions(descending=True):
             expected_tuple = expected_results.pop(0)
@@ -430,18 +430,50 @@ RETURNING relid,
         self.assertRaises(pg_rollingwindow.UsageError, self.target.freeze().next)
 
     def test_freeze(self):
-        expected_results = [('p1', 'c1'), ('p1, c2'), ('p2', 'c3')]
-        self.fetch_queue = self.standard_fetch_results + [copy.deepcopy(expected_results)]
+        self.fetch_queue = self.standard_fetch_results + [
+                ('partition_2',),                           # highest_freezable
+                [('partition_1', 1234, None), ('partition_2', 1234, None)],   # partitions
+                [('c1',), ('c2',)],                         # freeze partition_1
+                [('c3',)],                                  # freeze partition_2
+            ]
 
-        for fp in self.target.freeze():
-            expected_tuple = expected_results.pop(0)
-            expected_frozen_partition = pg_rollingwindow.RollingWindow.FrozenPartition(expected_tuple[0], expected_tuple[1])
-            self.assertEqual(expected_frozen_partition, fp)
+        expected_results = [pg_rollingwindow.FrozenPartition('partition_1', 'c1'),
+                            pg_rollingwindow.FrozenPartition('partition_1', 'c2'),
+                            pg_rollingwindow.FrozenPartition('partition_2', 'c3')]
+        actual_results = [x for x in self.target.freeze()]
+        self.assertEqual(expected_results, actual_results)
         method_calls = self.mock_cursor.return_value.method_calls
         n = self.verify_standard_fetch()
         self.assertEqual('execute', method_calls[n][0])
-        self.assertEqual(('SELECT partition_table_name, new_constraint FROM rolling_window.freeze(%(schema)s, %(table)s)',
+        self.assertEqual(('SELECT rolling_window.highest_freezable(%(schema)s, %(table)s)',
             {'schema': 'fake_schema', 'table': 'fake_table'}), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('fetchone', method_calls[n][0])
+        self.assertEqual((), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('execute', method_calls[n][0])
+        self.assertEqual(('SELECT relname, floor(reltuples) AS reltuples, NULL AS total_relation_size_in_bytes FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname',
+            {'schema': 'fake_schema', 'table': 'fake_table'}), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('fetchall', method_calls[n][0])
+        self.assertEqual((), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('execute', method_calls[n][0])
+        self.assertEqual(('SELECT f.c AS new_constraint FROM rolling_window.freeze_partition(%(schema)s, %(table)s, %(lower_bound)s) AS f(c)',
+            {'schema': 'fake_schema', 'table': 'fake_table', 'lower_bound': 1}), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('fetchall', method_calls[n][0])
+        self.assertEqual((), method_calls[n][1])
+        self.assertEqual({}, method_calls[n][2])
+        n += 1
+        self.assertEqual('execute', method_calls[n][0])
+        self.assertEqual(('SELECT f.c AS new_constraint FROM rolling_window.freeze_partition(%(schema)s, %(table)s, %(lower_bound)s) AS f(c)',
+            {'schema': 'fake_schema', 'table': 'fake_table', 'lower_bound': 2}), method_calls[n][1])
         self.assertEqual({}, method_calls[n][2])
         n += 1
         self.assertEqual('fetchall', method_calls[n][0])
