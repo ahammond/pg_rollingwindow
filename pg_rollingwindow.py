@@ -262,7 +262,6 @@ class PartitionDumper(PgToolCaller):
                 # I think the solution will involve parallel pg_dump, which should be in pg 9.2. So, hold off until then.
 
     def restore_file(self, r, filename):
-        #TODO: need to restore schemas for tables restoring to a schema that doesn't already exist
         l = getLogger('PartitionDumper.restore_file')
         self.validate_dump_directory()
         l.debug('Restoring %s.%s from %s', r.schema, r.table, filename)
@@ -1092,6 +1091,8 @@ Dump all frozen / freezable partitions which have not yet been dumped:
     dump --dump_directory=/path/to/dir
 
 Load all partition dump files that have not yet been loaded from the dump_directory:
+NOTE: to remain consistent with pg_restore, if you do not provide a --dbname parameter,
+this will stream the SQL to STDOUT.
     restore --dump_directory=/path/to/dir
 
 Initialize the database with the rolling_window schema and internal database API:
