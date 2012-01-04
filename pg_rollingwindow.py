@@ -1040,7 +1040,7 @@ def restore(options):
     dumper = PartitionDumper(options)
     if options.table is not None:   # I'm rolling a single table
         r = RollingWindow(options.db, options.schema, options.table)
-        restore_table(options, r, dumper)
+        restore_table(r, dumper)
     else:
         l.debug('No table specified. Restore all locally maintained tables.')
         for r in dumper.tables_eligible_to_restore():
