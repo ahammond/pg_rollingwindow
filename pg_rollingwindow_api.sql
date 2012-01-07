@@ -342,6 +342,7 @@ DECLARE
               AND relname = $2
               AND relkind = 'r')
         $q$;
+    child_oid oid;
     parent_index_str text;
     where_start int;
     where_str text;
@@ -359,6 +360,11 @@ DECLARE
     create_index_str text;
     parent_name_position int;
 BEGIN
+    SELECT c.oid INTO child_oid
+    FROM pg_catalog.pg_class c
+    WHERE relname = child
+      AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = parent_namespace);
+
     FOR parent_index_str IN EXECUTE index_query_str USING parent_namespace, parent
     LOOP
         -- parse the index create string starting from the end and going towards the front
@@ -409,6 +415,14 @@ BEGIN
 
         -- TODO: address cloning of UNIQUE / PRIMARY KEY constraints as actual constraints rather than just swooping their indexes.
         parent_index_str := substring(parent_index_str FROM 1 FOR index_name_start -1);
+
+        -- Detect if this index has already been applied to the child
+        CONTINUE WHEN EXISTS (SELECT 1
+            FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_index i ON c.oid = i.indexrelid
+            WHERE c.relname = new_index_name_str
+              AND c.relkind ='i'
+              AND i.indrelid = child_oid);
 
         create_index_str := parent_index_str
             || quote_ident(new_index_name_str)
