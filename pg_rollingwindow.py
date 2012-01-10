@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from datetime import datetime, timedelta
 from logging import getLogger
 from math import floor
 from optparse import OptionParser, OptionGroup, Values
@@ -10,6 +11,7 @@ from psycopg2 import connect, IntegrityError, ProgrammingError
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT, ISOLATION_LEVEL_READ_COMMITTED
 import re
 from subprocess import Popen, call
+from time import sleep
 
 __author__ = 'Andrew Hammond <andrew.hammond@receipt.com>'
 __copyright__ = 'Copyright (c) 2011 SmartReceipt'
@@ -1051,6 +1053,26 @@ def cleanup(options):
     raise NotImplementedError('WRITEME')
 
 ##########################################################################
+def repeat(action, options):
+    """
+    Given an action and an options block, run that action, with associated options
+    approximately ever_n_seconds.
+    """
+
+    run_interval = timedelta(seconds = float(options.every_n_seconds))
+
+    last_completion_time = datetime.utcnow()
+    while True:
+        action(options)
+        # TODO: refactor this for easier UT
+        this_completion_time = datetime.utcnow()
+        run_time = this_completion_time - last_completion_time
+        last_completion_time = this_completion_time
+        wait_time = run_interval - run_time
+        if wait_time.seconds > 0:
+            sleep(wait_time.seconds)
+
+##########################################################################
 # Interactive commands
 actions = {
     'init': init,
@@ -1064,7 +1086,7 @@ actions = {
 }
 
 def main():
-    usage="""usage: %prog [list|add|roll|freeze] ...
+    usage="""usage: %prog <verb> <options>
 List tables under management (or details about a specific table with the table parameter):
     list [[-n <schema>] -t <table>] [<PostgreSQL options>]
 
@@ -1096,6 +1118,7 @@ this will stream the SQL to STDOUT.
     restore --dump_directory=/path/to/dir
 
 Initialize the database with the rolling_window schema and internal database API:
+NOTE: for this to work, you have to be running it in the same directory as the pg_rollingwindow_api.sql file.
     init [<PostgreSQL options>]
 
 Note that for PostgreSQL options, standard libpq conventions are followed.
@@ -1132,6 +1155,8 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
         help='path for pg_dump and psql, default searchs system path')
     parser.add_option('--dump_directory',
         help='directory where dumps of partitions will dropped / searched for when using dump or undump command')
+    parser.add_option('--every_n_seconds',
+        help='if specified, repeat the action until killed')
 
     postgres_group = OptionGroup(parser, 'PostgreSQL connection options')
     postgres_group.add_option('-h', '--host',
@@ -1170,7 +1195,10 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
         return parser.print_help()
     else:
         options.ensure_value('db', PgConnection(options))
-        return action(options)
+        if options.every_n_seconds is None:
+            return action(options)
+        else:
+            repeat(action, options)
 
 if __name__ == '__main__':
     main()
