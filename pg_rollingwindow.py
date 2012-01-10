@@ -698,7 +698,7 @@ RETURNING relid,
                                    {'schema': self.schema, 'table': self.table, 'lower_bound': lower_bound,
                                     'clone_indexes': False, 'to_limbo': False})
                     rows_moved = cursor.fetchone()[0]
-                    l.info('Moved %s rows to partition %s.', partition, rows_moved)
+                    l.info('Moved %s rows to partition %s.', rows_moved, partition)
                 except IntegrityError, e:
                     l.warn('Failed to move data to partition for %s.%s %s: %s', self.schema, self.table, lower_bound, e)
                     #TODO: a more fine-grained approach around sending data to limbo would be nice. This sends entire chunks of data...
