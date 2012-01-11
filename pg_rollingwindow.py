@@ -698,7 +698,7 @@ RETURNING relid,
                 try:
                     cursor.execute('SELECT rolling_window.move_data_to_partition(%(schema)s, %(table)s, %(lower_bound)s, %(clone_indexes)s, %(to_limbo)s)',
                                    {'schema': self.schema, 'table': self.table, 'lower_bound': lower_bound,
-                                    'clone_indexes': False, 'to_limbo': False})
+                                    'clone_indexes': True, 'to_limbo': False})
                     rows_moved = cursor.fetchone()[0]
                     l.info('Moved %s rows to partition %s.', rows_moved, partition)
                 except IntegrityError, e:
