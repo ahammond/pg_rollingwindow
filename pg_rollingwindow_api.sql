@@ -412,7 +412,7 @@ BEGIN
         ELSE    -- We should just give it something reasonable for an index name, so stick the child's name on as a prefix.
             new_index_name_str := child || '_' || index_name_str;
         END IF;
-        new_index_name_str := substring(new_index_name_str, FROM 1 FOR 64); -- deal with truncation
+        new_index_name_str := substring(new_index_name_str FROM 1 FOR 64); -- deal with truncation
 
         -- TODO: address cloning of UNIQUE / PRIMARY KEY constraints as actual constraints rather than just swooping their indexes.
         parent_index_str := substring(parent_index_str FROM 1 FOR index_name_start -1);
