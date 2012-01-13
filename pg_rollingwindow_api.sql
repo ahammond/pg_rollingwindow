@@ -43,6 +43,7 @@ CREATE TABLE columns_to_freeze (
     relid oid REFERENCES maintained_table(relid) ON DELETE CASCADE,
     column_name name,
     lower_bound_overlap text,
+    prior_upper_bound_percentile int,
     PRIMARY KEY (relid, column_name)
 );
 COMMENT ON TABLE columns_to_freeze
@@ -53,6 +54,8 @@ COMMENT ON COLUMN columns_to_freeze.column_name
 IS 'The pg_attribute.attname of the column to be frozen.';
 COMMENT ON COLUMN columns_to_freeze.lower_bound_overlap
 IS 'when not NULL, what to subtract from the upper bound of the previous partition to generate the lower bound for this column when freezing.';
+COMMENT ON COLUMN columns_to_freeze.prior_upper_bound_percentile
+IS 'when not NULL and lower_bound_overlap is not NULL, use the top n-th percentile rather than the max previous partitions upper bound for determining a starting point when calculating the new lower bound.';
 
 
 ---------------------------------------------------------------------
@@ -792,9 +795,11 @@ CREATE OR REPLACE FUNCTION move_data_below_lower_bound_overlap_to_limbo(
 DECLARE
     parent_relid oid;
     step bigint;
+    old_child_name name;
     old_child_relid oid;
     constrained_column name;
     lower_bound_overlap text;
+    prior_upper_bound_percentile int;
     where_clause text;
     old_bound_src text;
     ordinal text;
@@ -828,17 +833,19 @@ BEGIN
         RETURN 0;
     END IF;
 
+    old_child_name := rolling_window.child_name(parent, lower_bound - step);
+
     SELECT p.partition_table_oid
         INTO old_child_relid
         FROM rolling_window.list_partitions(parent_namespace, parent) AS p
-        WHERE p.relname = rolling_window.child_name(parent, lower_bound - step);
+        WHERE p.relname = old_child_name;
     IF old_child_relid IS NULL
     THEN    -- since there is no older child partition, we have nothing to move.
         RETURN 0;
     END IF;
 
-    FOR constrained_column, lower_bound_overlap IN
-        SELECT f.column_name, f.lower_bound_overlap
+    FOR constrained_column, lower_bound_overlap, prior_upper_bound_percentile IN
+        SELECT f.column_name, f.lower_bound_overlap, f.prior_upper_bound_percentile
         FROM rolling_window.columns_to_freeze f
         WHERE f.relid = parent_relid
     LOOP
@@ -846,21 +853,35 @@ BEGIN
         CONTINUE WHEN lower_bound_overlap IS NULL;
         old_bound_src := NULL;
 
+        IF prior_upper_bound_percentile IS NULL
+        THEN
         -- find the old_child's bound_foo constraint, if any
-        SELECT c.consrc
-            INTO old_bound_src
-            FROM pg_catalog.pg_constraint c
-            WHERE conname = 'bound_' || constrained_column
-              AND conrelid = old_child_relid;
-        CONTINUE WHEN old_bound_src IS NULL;      -- we don't have an older bound, so... next?
+            SELECT c.consrc
+                INTO old_bound_src
+                FROM pg_catalog.pg_constraint c
+                WHERE conname = 'bound_' || constrained_column
+                  AND conrelid = old_child_relid;
+            CONTINUE WHEN old_bound_src IS NULL;      -- we don't have an older bound, so... next?
 
-        -- parse out the upper bound
-        ordinal := constrained_column || ' <= ';
-        old_upper_bound_start := position(ordinal in old_bound_src) + length(ordinal);
-        old_upper_bound_length := 1 + length(old_bound_src) - old_upper_bound_start - length('))');
-        old_upper_bound := substring(old_bound_src from old_upper_bound_start for old_upper_bound_length);
+            -- parse out the upper bound
+            ordinal := constrained_column || ' <= ';
+            old_upper_bound_start := position(ordinal in old_bound_src) + length(ordinal);
+            CONTINUE WHEN old_upper_bound_start <= 0;   -- this should never happen, but...
+            old_upper_bound_length := 1 + length(old_bound_src) - old_upper_bound_start - length('))');
+            old_upper_bound := substring(old_bound_src from old_upper_bound_start for old_upper_bound_length);
+        ELSE    -- calculate the old_upper_bound_start from the top nth percentile rather than the absolute max of the older sibling.
+                -- this query creates a result in the same form as old_upper_bound above. 'value'::type
+                -- using the format function because... otherwise there are just tooooo many levels of quote escaping
+            EXECUTE format(
+$fmt$SELECT $$'$$ || old_upper || $$'::$$ || pg_typeof(old_upper) AS old_upper_bound FROM (
+    SELECT max(col) AS old_upper FROM (
+        SELECT %1$I AS col, ntile(100) OVER (ORDER BY %1$I DESC) AS percent FROM %2$I.%3$I
+    ) AS a WHERE percent = $1
+) AS b$fmt$,  constrained_column, parent_namespace, old_child_name)
+            INTO old_upper_bound
+            USING prior_upper_bound_percentile;
+        END IF;
 
-        CONTINUE WHEN old_upper_bound_start <= 0;   -- this should never happen, but...
 
         -- calculate the new lower bound
         boundary_math :=  'SELECT '
