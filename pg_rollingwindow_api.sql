@@ -1119,11 +1119,13 @@ IS 'Add boundary constraints for all columns ';
 CREATE OR REPLACE FUNCTION set_freeze_column(
     my_relid oid,
     my_column_name name,
-    my_lower_bound_overlap text
+    my_lower_bound_overlap text,
+    my_prior_upper_bound_percentile int
 ) RETURNS boolean AS $definition$
 BEGIN
     UPDATE rolling_window.columns_to_freeze
-    SET lower_bound_overlap = my_lower_bound_overlap
+    SET lower_bound_overlap = my_lower_bound_overlap,
+        prior_upper_bound_percentile = my_prior_upper_bound_percentile
     WHERE relid = my_relid
       AND column_name = my_column_name;
     IF found THEN
@@ -1131,8 +1133,8 @@ BEGIN
     END IF;
 
     BEGIN
-        INSERT INTO rolling_window.columns_to_freeze (relid, column_name, lower_bound_overlap)
-        VALUES (my_relid, my_column_name, my_lower_bound_overlap);
+        INSERT INTO rolling_window.columns_to_freeze (relid, column_name, lower_bound_overlap, prior_upper_bound_percentile)
+        VALUES (my_relid, my_column_name, my_lower_bound_overlap, my_prior_upper_bound_percentile);
         RETURN false;
     EXCEPTION WHEN unique_violation
     THEN

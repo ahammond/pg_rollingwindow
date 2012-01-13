@@ -422,6 +422,7 @@ class FrozenPartition(object):
     def __repr__(self):
         return 'FrozenPartition(%s, %s)' % (self.partition_table_name, self.new_constraint)
 
+
 ##########################################################################
 class RollingWindow(object):
     """Encapsulate handling of a table and it's partitions.
@@ -637,17 +638,25 @@ RETURNING relid,
         self.db.connection.commit()
         self.db.connection.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
 
-    def freeze_column(self, column, overlap=None):
+    def freeze_column(self, column, overlap=None, prior_upper_bound_percentile=None):
         l = getLogger('RollingWindow.freeze_column')
         if overlap is None:
-            l.debug('Freezing column %s.%s.%s with no overlap bounary', self.schema, self.table, column)
+            l.debug('Freezing column %s.%s.%s with no overlap bounary',
+                    self.schema, self.table, column)
         else:
-            l.debug('Freezing column %s.%s.%s with overlap bounary %s', self.schema, self.table, column, overlap)
+            if prior_upper_bound_percentile is None:
+                l.debug('Freezing column %s.%s.%s with overlap bounary %s',
+                        self.schema, self.table, column, overlap)
+            else:
+                l.debug('Freezing column %s.%s.%s with overlap bounary %s based on %dth percentile',
+                        self.schema, self.table, column, overlap, prior_upper_bound_percentile)
+
         if not self.is_managed:
             raise UsageError('May not set a freeze column on a table which is not managed.')
         cursor = self.db.connection.cursor()
-        cursor.execute('SELECT rolling_window.set_freeze_column(%(relid)s, %(column_name)s, %(lower_bound_overlap)s)',
-                       {'relid': self.relid, 'column_name': column, 'lower_bound_overlap': overlap})
+        cursor.execute('SELECT rolling_window.set_freeze_column(%(relid)s, %(column_name)s, %(lower_bound_overlap)s, %(prior_upper_bound_percentile)s)',
+                       {'relid': self.relid, 'column_name': column, 'lower_bound_overlap': overlap,
+                        'prior_upper_bound_percentile': prior_upper_bound_percentile})
         result = cursor.fetchone()[0]
         if result:
             l.debug('Updated freeze column settings.')
@@ -969,13 +978,20 @@ def list(options):
 
 ##########################################################################
 def freeze_column(options):
-    l =getLogger('freeze_column')
+    l = getLogger('freeze_column')
+    percentile = int(options.prior_upper_bound_percentile) if options.prior_upper_bound_percentile else None
     if options.overlap is None:
-        l.debug('Freezing column %s.%s.%s with no overlap', options.schema, options.table, options.column)
+        l.debug('Freezing column %s.%s.%s with no overlap',
+                options.schema, options.table, options.column)
     else:
-        l.debug('Freezing column %s.%s.%s with overlap "%s"', options.schema, options.table, options.column, options.overlap)
+        if options.prior_upper_bound_percentile is None:
+            l.debug('Freezing column %s.%s.%s with overlap "%s"',
+                    options.schema, options.table, options.column, options.overlap)
+        else:
+            l.debug('Freezing column %s.%s.%s with overlap "%s" based on %dth percentile',
+                    options.schema, options.table, options.column, options.overlap, percentile)
     t = RollingWindow(options.db, options.schema, options.table)
-    t.freeze_column(options.column, options.overlap)
+    t.freeze_column(options.column, options.overlap, percentile)
 
 ##########################################################################
 def freeze_table(db, schema, table, cluster):
@@ -1100,8 +1116,9 @@ Specifying the --vacuum_parent_after_every may help for initial rolls on systems
     roll [[-n <schema>] -t <table>] [--vacuum_parent_after_every 10] [<PostgreSQL options>]
 
 Specify a column and optional lower_bound_overlap to configure a column for freezing.
-The presence of a column paramater causes configuration behavior.
-    freeze [[-n <schema>] -t <table> [-c <column> [--overlap <overlap>]]] [<PostgreSQL options>]
+If the lower_bound_overlap is specified, then the optional prior_upper_bound_percentile may also be specified.
+The presence of the column paramater causes configuration behavior.
+    freeze [[-n <schema>] -t <table> [-c <column> [--overlap <overlap> [--prior_upper_bound_percentile <percentile>]]]] [<PostgreSQL options>]
 Otherwise, this will freeze all eligible partitions for the table (or all maintained tables if no table parameter).
 Specifying the --cluster parameter will cause the table to be clustered after freezing.
     freeze [[-n <schema>] -t <table>] [--cluster] [<PostgreSQL options>]
@@ -1127,8 +1144,6 @@ Note that for PostgreSQL options, standard libpq conventions are followed.
 See http://www.postgresql.org/docs/current/static/libpq-envars.html')
 """
 
-    # TODO: support addition of new freeze columns?
-
     parser = OptionParser(usage=usage, version=__vcs_id__, conflict_handler="resolve")
     parser.add_option('-q', '--quiet', dest='quiet_count', action='count')
     parser.add_option('-v', '--verbose', dest='verbose_count', action='count')
@@ -1151,6 +1166,8 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
         help='cluster partitions when freezing them')
     parser.add_option('--overlap',
         help='what to subtract from the upper bound of the previous partition to generate the new lower bound for this partition for the associated column')
+    parser.add_option('--prior_upper_bound_percentile',
+        help='if set, determine the upper bound of the previous partition based on the top n\'th percentile of the max of that column, rather than simply grabbing it from the actual bound declaration. WARNING: this will fail when trying to freeze tables with very small data-sets.')
     parser.add_option('--vacuum_parent_after_every', default=0,
         help='when rolling data to partitions, VACUUM FULL the parent table after moving every n partitions. Super slow, but reclaims disk space. Not particularly useful except when rolling a lot of data out of the parent table.')
     parser.add_option('--pg_path',
