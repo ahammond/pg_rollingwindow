@@ -3,6 +3,7 @@
 CREATE SCHEMA rolling_window;
 SET search_path TO rolling_window,public;
 
+
 CREATE TABLE maintained_table (
     relid oid PRIMARY KEY, -- Would like to add: REFERENCES pg_catalog.pg_class (oid) ON DELETE CASCADE ON UPDATE RESTRICT,
     attname name NOT NULL,
@@ -35,7 +36,6 @@ COMMENT ON COLUMN maintained_table.partitioned_on
 IS 'when we first partitioned this table';
 COMMENT ON COLUMN maintained_table.rolled_on
 IS 'when were we last told to maintain this table';
-
 
 
 ---------------------------------------------------------------------
@@ -842,7 +842,7 @@ BEGIN
         FROM rolling_window.columns_to_freeze f
         WHERE f.relid = parent_relid
     LOOP
-        --If we are not worried about overlap for this column...
+        -- If we are not worried about overlap for this column...
         CONTINUE WHEN lower_bound_overlap IS NULL;
         old_bound_src := NULL;
 
