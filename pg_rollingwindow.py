@@ -131,6 +131,21 @@ class SchemaInitializer(PgToolCaller):
 
 
 ##########################################################################
+class EligiblePartition(object):
+    def __init__(self, name, schema_only=False):
+        self.name = name
+        self.schema_only = schema_only
+
+    def __repr__(self):
+        return 'EligiblePartition("%s",%s)' % (self.name, self.schema_only)
+
+    def __cmp__(self, other):
+        if self.name == other.name:
+            return cmp(self.schema_only, other.schema_only)
+        return cmp(self.name, other.name)
+
+
+##########################################################################
 class PartitionDumper(PgToolCaller):
 
     standard_pg_dump_arguments = ['--format=custom', '--compress=9', '--no-password']
@@ -206,19 +221,6 @@ class PartitionDumper(PgToolCaller):
         rename(partial_dump_file, dump_file)
         return dump_file
 
-    class EligiblePartition(object):
-        def __init__(self, name, schema_only=False):
-            self.name = name
-            self.schema_only = schema_only
-
-        def __repr__(self):
-            return 'EligiblePartition("%s",%s)' % (self.name, self.schema_only)
-
-        def __cmp__(self, other):
-            if self.name == other.name:
-                return cmp(self.schema_only, other.schema_only)
-            return cmp(self.name, other.name)
-
     def eligible_to_dump(self, r):
         """Given a RollingWindow, list the partitions eligible to be dumped.
 
@@ -237,7 +239,7 @@ class PartitionDumper(PgToolCaller):
         # has table ever been dumped before?
         if -1 == r.last_partition_dumped:
             l.info('Parent table is eligible')
-            yield self.EligiblePartition(r.table, schema_only=True)
+            yield EligiblePartition(r.table, schema_only=True)
 
         if highest_freezable is not None:
             for p in r.partitions():
@@ -258,7 +260,7 @@ class PartitionDumper(PgToolCaller):
                     break
                 #TODO: what about checking to see if a dumpfile or partial already exists? (no clobber)
                 l.debug('%s looks eligible', p.partition_table_name)
-                yield self.EligiblePartition(p.partition_table_name, schema_only=False)
+                yield EligiblePartition(p.partition_table_name, schema_only=False)
                 #TODO: would it be better to fork these off in parallel?
                 # That would make keeping track of last_partition_dumped a little trickier. What if one fails?
                 # I think the solution will involve parallel pg_dump, which should be in pg 9.2. So, hold off until then.

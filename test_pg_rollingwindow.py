@@ -770,10 +770,10 @@ class TestPartitionDumper(OptionBase):
         actual_results = [e for e in self.target.eligible_to_dump(self.mock_RollingWindow)]
         self.verify(o)
         self.assertEqual([
-            pg_rollingwindow.PartitionDumper.EligiblePartition('fake_table_0000000000000000050',False),
-            pg_rollingwindow.PartitionDumper.EligiblePartition("fake_table_0000000000000000060",False),
-            pg_rollingwindow.PartitionDumper.EligiblePartition("fake_table_0000000000000000070",False),
-            pg_rollingwindow.PartitionDumper.EligiblePartition("fake_table_0000000000000000080",False)
+            pg_rollingwindow.EligiblePartition('fake_table_0000000000000000050',False),
+            pg_rollingwindow.EligiblePartition("fake_table_0000000000000000060",False),
+            pg_rollingwindow.EligiblePartition("fake_table_0000000000000000070",False),
+            pg_rollingwindow.EligiblePartition("fake_table_0000000000000000080",False)
         ], actual_results)
         log_calls = self.mock_getLogger.return_value.method_calls
         n = 0
@@ -870,7 +870,7 @@ class TestPartitionDumper(OptionBase):
         self.mock_RollingWindow.highest_freezable = None
         actual_results = [e for e in self.target.eligible_to_dump(self.mock_RollingWindow)]
         self.verify(o)
-        self.assertEqual([pg_rollingwindow.PartitionDumper.EligiblePartition('fake_table', True)], actual_results)
+        self.assertEqual([pg_rollingwindow.EligiblePartition('fake_table', True)], actual_results)
         log_calls = self.mock_getLogger.return_value.method_calls
         n = 0
         self.assertEqual('debug', log_calls[n][0])
@@ -896,7 +896,7 @@ class TestPartitionDumper(OptionBase):
         self.mock_RollingWindow.highest_freezable = 'fake_table_0000000000000000000'
         actual_results = [e for e in self.target.eligible_to_dump(self.mock_RollingWindow)]
         self.verify(o)
-#        self.assertEqual([pg_rollingwindow.PartitionDumper.EligiblePartition('fake_table_0000010', True)], actual_results)
+#        self.assertEqual([pg_rollingwindow.EligiblePartition('fake_table_0000010', True)], actual_results)
         log_calls = self.mock_getLogger.return_value.method_calls
         n = 0
         self.assertEqual('debug', log_calls[n][0])
