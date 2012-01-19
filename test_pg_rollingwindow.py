@@ -231,8 +231,9 @@ RETURNING relid,
         method_calls = self.mock_cursor.return_value.method_calls
         n = self.verify_standard_fetch()
         self.assertEqual('execute', method_calls[n][0])
-        self.assertEqual(('SELECT rolling_window.set_freeze_column(%(relid)s, %(column_name)s, %(lower_bound_overlap)s)',
-            {'relid': 9872435, 'column_name': 'fake_column', 'lower_bound_overlap': None}), method_calls[n][1])
+        self.assertEqual(('SELECT rolling_window.set_freeze_column(%(relid)s, %(column_name)s, %(lower_bound_overlap)s, %(prior_upper_bound_percentile)s)',
+            {'relid': 9872435, 'column_name': 'fake_column', 'lower_bound_overlap': None,
+             'prior_upper_bound_percentile': None}), method_calls[n][1])
         self.assertEqual({}, method_calls[n][2])
         n += 1
         self.assertEqual('fetchone', method_calls[n][0])
@@ -250,9 +251,10 @@ RETURNING relid,
         method_calls = self.mock_cursor.return_value.method_calls
         n = self.verify_standard_fetch()
         self.assertEqual('execute', method_calls[n][0])
-        self.assertEqual(('SELECT rolling_window.set_freeze_column(%(relid)s, %(column_name)s, %(lower_bound_overlap)s)',
+        self.assertEqual(('SELECT rolling_window.set_freeze_column(%(relid)s, %(column_name)s, %(lower_bound_overlap)s, %(prior_upper_bound_percentile)s)',
             {'relid': 9872435, 'column_name': 'fake_column',
-             'lower_bound_overlap': 'fake_overlap'}), method_calls[n][1])
+             'lower_bound_overlap': 'fake_overlap',
+             'prior_upper_bound_percentile': None}), method_calls[n][1])
         self.assertEqual({}, method_calls[n][2])
         n += 1
         self.assertEqual('fetchone', method_calls[n][0])

@@ -36,7 +36,7 @@ class PgConnection(object):
         l = getLogger('PgConnection.__init__')
         l.debug('init')
         self._connection = connection
-        self.arguments = {'application_name': 'pg_rollingwindow.py'}
+        self.arguments = {}
         for k in dir(options):
             if k in self.legal_arguments:
                 v = eval('options.%s' % k)
