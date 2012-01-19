@@ -36,7 +36,7 @@ class PgConnection(object):
         l = getLogger('PgConnection.__init__')
         l.debug('init')
         self._connection = connection
-        self.arguments = {}
+        self.arguments = {'application_name': 'pg_rollingwindow.py'}
         for k in dir(options):
             if k in self.legal_arguments:
                 v = eval('options.%s' % k)
@@ -159,7 +159,6 @@ class PartitionDumper(PgToolCaller):
             raise UsageError('Dumpers must be instantiated with a dump_directory option')
         self.dump_directory = options.dump_directory
         super(PartitionDumper, self).__init__(options, connection)
-
 
     def validate_dump_directory(self, write_access=False):
         l = getLogger('PartitionDumper.validate_dump_directory')

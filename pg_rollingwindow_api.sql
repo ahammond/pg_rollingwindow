@@ -1209,4 +1209,47 @@ COMMENT ON FUNCTION unfreeze_column(name, name, name)
 IS 'Remove boundary constraints for all columns ';
 
 
+---------------------------------------------------------------------
+CREATE TYPE limbo_result AS (
+    lower_bound bigint,
+    rows_in_limbo bigint
+);
 
+
+---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION limbo_analysis(
+    parent_namespace name,
+    parent name
+) RETURNS SETOF limbo_result AS $definition$
+DECLARE
+    step bigint;
+    attname name;
+    limbo_name name;
+    lower_bound bigint;
+    limbo_count bigint;
+    select_sql text;
+    l_result rolling_window.limbo_result;
+BEGIN
+    SELECT m.step, m.attname
+        INTO step, attname
+        FROM rolling_window.maintained_table m
+        INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
+        INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
+        WHERE c.relname = parent
+        AND n.nspname = parent_namespace;
+
+    limbo_name := parent || '_limbo';
+
+    select_sql := format($$SELECT %I - %I %% %L AS lower_bound, count(*) AS limbo_count
+FROM %I.%I GROUP BY 1$$, attname, attname, step, parent_namespace, limbo_name);
+
+    FOR lower_bound, limbo_count IN
+        EXECUTE select_sql
+    LOOP
+        l_result := ROW(lower_bound, limbo_count);
+        RETURN NEXT l_result;
+    END LOOP;
+END;
+$definition$ LANGUAGE plpgsql;
+COMMENT ON FUNCTION limbo_analysis(name, name)
+IS 'How many records are in limbo that would otherwise belong to a given partition';
