@@ -39,11 +39,12 @@ Or, you could delete stuff older than the oldest partition (this seems reasonabl
 Then for stuff that should belong in other partitions, you can move it there manually.
 
 REQUIREMENTS
-PostgreSQL 9.0 (probably works with older versions, but not tested)
+PostgreSQL 9.1 (uses the format() function)
 Python 2.6 (possibly works with 2.5 or even 2.4, but... not tested)
  - psycopg2
 Python unit testing (developers only)
  - Mock (http://www.voidspace.org.uk/python/mock/)
+pgTAP (developers only)  TODO: add pgtap tests for the database api.
 
 INSTALLATION
 
@@ -62,7 +63,7 @@ pg_rollingwindow.py freeze -t tbl -c rnd
 pg_rollingwindow.py freeze -t tbl -c tstmp --overlap "'2 days'::interval"
 
 BASIC USAGE
-Create a cron job that regularly runs
+Create a cron job that regularly runs the following:
 
 pg_rollingwindow.py roll
 

@@ -814,7 +814,7 @@ RETURNING relid,
         l.debug('Got highest_freezable: %s', r)
         return r
 
-    def freeze(self, cluster=False):
+    def freeze(self, cluster=False, vacuum_freeze=False):
         """For all but the highest non-empty partition, add a min/max bound constraint for each freeze_column.
 
         Clustering is optional and defaults to off as it's expensive.
@@ -845,8 +845,11 @@ RETURNING relid,
                 l.debug('Partition %s added constraints %s', p.partition_table_name, f.new_constraint)
                 yield f
             if cluster:
-                l.debug('Clustering %s.%s', self.schema, p.partition_table_name)
+                l.debug('CLUSTERing %s.%s', self.schema, p.partition_table_name)
                 cursor.execute('CLUSTER %(schema)s.%(table)s' % {'schema': self.schema, 'table': p.partition_table_name})
+            if vacuum_freeze:
+                l.debug('VACUUM FREEZEing %s.%s', self.schema, p.partition_table_name)
+                cursor.execute('VACUUM FREEZE %(schema)s.%(table)s' % {'schema': self.schema, 'table': p.partition_table_name})
 
     def update_insert_rule(self):
         raise NotImplementedError('Management of insert rules on the parent is not implemented, yet. Wanna write it?')
@@ -993,14 +996,14 @@ def freeze_column(options):
     t.freeze_column(options.column, options.overlap, percentile)
 
 ##########################################################################
-def freeze_table(db, schema, table, cluster):
+def freeze_table(db, schema, table, cluster, vacuum_freeze):
     l = getLogger('freeze_table')
     l.debug('Freezing %s.%s', schema, table)
     t = RollingWindow(db, schema, table)
     if not t.is_managed:
         l.error('%s.%s is not managed. Stopping.', schema, table)
         return
-    for f in t.freeze(cluster):
+    for f in t.freeze(cluster, vacuum_freeze):
         print 'Partition %s.%s added %s' % (schema, f.partition_table_name, f.new_constraint)
 
 ##########################################################################
@@ -1018,7 +1021,7 @@ def freeze(options):
         l.debug('No table specified. Freeze them all.')
         m = MaintainedTables(options.db)
         for managed_table in m:
-            freeze_table(options.db, managed_table[0], managed_table[1], options.cluster)
+            freeze_table(options.db, managed_table[0], managed_table[1], options.cluster, options.freeze_after_cluster)
 
 ##########################################################################
 def dump_table(db, schema, table, dumper):
@@ -1118,9 +1121,9 @@ Specify a column and optional lower_bound_overlap to configure a column for free
 If the lower_bound_overlap is specified, then the optional prior_upper_bound_percentile may also be specified.
 The presence of the column paramater causes configuration behavior.
     freeze [[-n <schema>] -t <table> [-c <column> [--overlap <overlap> [--prior_upper_bound_percentile <percentile>]]]] [<PostgreSQL options>]
-Otherwise, this will freeze all eligible partitions for the table (or all maintained tables if no table parameter).
+Otherwise, this will apply bound constraints to all configured columns in all eligible partitions for the table (or all maintained tables if no table parameter).
 Specifying the --cluster parameter will cause the table to be clustered after freezing.
-    freeze [[-n <schema>] -t <table>] [--cluster] [<PostgreSQL options>]
+    freeze [[-n <schema>] -t <table>] [--cluster] [--freeze_after_cluster] [<PostgreSQL options>]
 
 Cleanup and (re-)freeze all eligible partitions for the table (or all maintained tables if no table parameter).
 If a freeze_column and lower_bound_overlap are provided, apply that offset to the table.freeze_column,
@@ -1162,7 +1165,9 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
     parser.add_option('-l', '--data_lag_window', default=0,
         help='partitions following the highest partition with data to hold back from freezing / dumping')
     parser.add_option('--cluster', action='store_true', default=False,
-        help='cluster partitions when freezing them')
+        help='CLUSTER partitions when freezing them')
+    parser.add_option('--freeze_after_cluster', action='store_true', default=False,
+        help='VACUUM FREEZE partitions after CLUSTERing them when freezing')
     parser.add_option('--overlap',
         help='what to subtract from the upper bound of the previous partition to generate the new lower bound for this partition for the associated column')
     parser.add_option('--prior_upper_bound_percentile',
