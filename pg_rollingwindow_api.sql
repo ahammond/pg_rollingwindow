@@ -94,7 +94,6 @@ CREATE OR REPLACE FUNCTION min_max_in_parent_only(
 ) RETURNS RECORD AS $definition$
 DECLARE
     attname name;
-    select_str text;
 BEGIN
     SELECT m.attname, m.step
         INTO attname, step
@@ -107,11 +106,8 @@ BEGIN
     THEN
         RAISE EXCEPTION 'table not found in rolling_window.maintained_table';
     END IF;
-    select_str := 'SELECT min(' || quote_ident(attname)
-        || ') , max(' || quote_ident(attname)
-        || ') FROM ONLY ' || quote_ident(parent_namespace)
-        || '.' || quote_ident(parent);
-    EXECUTE select_str INTO min_value, max_value;
+    EXECUTE format($$SELECT min(%1$I), max(%1$I) FROM ONLY %2$I.%3$I $$, attname, parent_namespace, parent)
+    INTO min_value, max_value;
 END;
 $definition$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION min_max_in_parent_only(name, name, OUT bigint, OUT bigint, OUT bigint)
@@ -129,7 +125,6 @@ DECLARE
     attname name;
     step bigint;
     upper_bound bigint;
-    create_str text;
 BEGIN
     SELECT m.attname, m.step
         INTO attname, step
@@ -144,10 +139,8 @@ BEGIN
     END IF;
     child := rolling_window.child_name(parent, lower_bound);
     upper_bound := lower_bound + step - 1;
-    create_str := 'CREATE TABLE ' || quote_ident(parent_namespace) || '.' || quote_ident(child)
-        || ' ( CHECK ( '|| quote_ident(attname)|| ' BETWEEN '|| lower_bound || ' AND '|| upper_bound || ' ) ) '
-        || 'INHERITS ( ' || quote_ident(parent_namespace) || '.' || quote_ident(parent) || ' )';
-    EXECUTE create_str;
+    EXECUTE format($$CREATE TABLE %1$I.%2$I ( CHECK ( %3$I BETWEEN %4$L AND %5$L ) ) INHERITS ( %1%I.%6%I )$$,
+        parent_namespace, child, attname, lower_bound, upper_bound, parent);
     RETURN child;
 END;
 $definition$ LANGUAGE plpgsql;
@@ -162,32 +155,6 @@ CREATE OR REPLACE FUNCTION add_limbo_partition(
 ) RETURNS name AS $definition$
 DECLARE
     child name;
-    create_str text;
-    index_oid oid;
-    index_query_str text := $q$
-        SELECT indexrelid FROM pg_index
-        WHERE indrelid = (
-            SELECT c.oid FROM pg_catalog.pg_class c
-            INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
-            WHERE nspname = $1
-              AND relname = $2
-              AND relkind = 'r')
-        $q$;
-    parent_index_str text;
-    where_start int;
-    where_str text;
-    tablespace_start int;
-    tablespace_str text;
-    with_start int;
-    with_str text;
-    using_start int;
-    using_str text;
-    on_start int;
-    on_str text;
-    index_name_start int;
-    index_name_str text;
-    new_index_name_str text;
-    create_index_str text;
 BEGIN
     child := parent || '_limbo';
     IF EXISTS ( SELECT 1
@@ -198,9 +165,7 @@ BEGIN
     THEN
         RETURN NULL;    -- already exists.
     END IF;
-    create_str := 'CREATE TABLE ' || quote_ident(child)
-        || '() INHERITS ( ' || quote_ident(parent) || ' )';
-    EXECUTE create_str;
+    EXECUTE format($$CREATE TABLE %1$I.%2$I () INHERITS (%1$I.%3$I)$$, parent_namespace, child, parent);
 
     PERFORM * FROM rolling_window.clone_indexes_to_partition(parent_namespace, parent, child);
     RETURN child;
