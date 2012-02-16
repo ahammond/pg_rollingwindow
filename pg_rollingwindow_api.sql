@@ -1083,19 +1083,21 @@ DECLARE
     highest_freezable name;
     child_relid oid;
     child_name name;
+    is_frozen boolean;
     new_constraint name;
     f_result rolling_window.freeze_result;
     lower_bound bigint;
     rows_sent_to_limbo bigint;
 BEGIN
     highest_freezable := rolling_window.highest_freezable(parent_namespace, parent);
-    FOR child_relid, child_name IN
-        SELECT p.partition_table_oid, p.relname
+    FOR child_relid, child_name, is_frozen IN
+        SELECT p.partition_table_oid, p.relname, p.is_frozen
         FROM rolling_window.list_partitions(parent_namespace, parent) AS p
         WHERE p.relname ~ (parent || E'_\\d+$')
           AND p.relname <= highest_freezable
         ORDER BY p.relname
     LOOP
+        CONTINUE WHEN is_frozen;
         lower_bound := rolling_window.lower_bound_from_child_name(child_name);
         rows_sent_to_limbo := rolling_window.move_data_below_lower_bound_overlap_to_limbo(parent_namespace, parent, lower_bound);
         FOR new_constraint IN
