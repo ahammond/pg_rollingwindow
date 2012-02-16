@@ -666,7 +666,7 @@ BEGIN
         ORDER BY p.relname DESC
     LOOP
         IF highest_partition IS NULL
-    THEN
+        THEN
             highest_partition := current_partition;
         END IF;
         EXIT WHEN reltuples > 0;    -- reltuples = 0 means known empty
