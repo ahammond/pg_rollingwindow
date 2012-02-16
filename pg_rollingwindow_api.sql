@@ -637,7 +637,7 @@ BEGIN
         lower_bound_result := regexp_matches(l_result.relname, E'.*_(\\d+)$');
         IF lower_bound_result IS NOT NULL
         THEN
-            IF EXISTS ( SELECT 1 FROM rolling_window.columns_missing_constraints(parent_namespace, parent, lower_bound_result[1]) )
+            IF NOT EXISTS ( SELECT 1 FROM rolling_window.columns_missing_constraints(parent_namespace, parent, lower_bound_result[1]) )
             THEN
                 l_result.is_frozen := TRUE;
             END IF;
