@@ -254,6 +254,9 @@ class PartitionDumper(PgToolCaller):
                 if partition_number <= r.last_partition_dumped:
                     l.debug('I think I already dumped %s since %d is less than %d', p.partition_table_name, partition_number, r.last_partition_dumped)
                     continue
+                if not p.is_frozen:
+                    l.debug('Skipping %s because it is freezable but is not yet frozen', p.partition_table_name)
+                    continue
                 if p.partition_table_name > highest_freezable:      # we can get away with a string comparison since 0 padding of child names
                     l.debug('%s is higher than %s, so we have dumped all the freezable tables.', p.partition_table_name, highest_freezable)
                     break
@@ -385,10 +388,11 @@ class PartitionResult(object):
 class Partition(object):
     R_PARTITION = re.compile(r'^(?P<parent_name>.*)_(?:(?P<lower_bound>\d+)|(?P<is_limbo>limbo))$')
 
-    def __init__(self, partition_table_name, estimated_rows, total_relation_size_in_bytes):
+    def __init__(self, partition_table_name, estimated_rows, total_relation_size_in_bytes, is_frozen):
         self.partition_table_name = partition_table_name
         self.estimated_rows = estimated_rows
         self.total_relation_size_in_bytes = total_relation_size_in_bytes
+        self.is_frozen = is_frozen
         m = self.R_PARTITION.match(partition_table_name)
         self.lower_bound = None
         self.is_limbo = False
@@ -788,9 +792,9 @@ RETURNING relid,
         l.debug('Listing %s.%s', self.schema, self.table)
         cursor = self.db.connection.cursor()
         if with_size:
-            query = 'SELECT relname, floor(reltuples) AS reltuples, pg_total_relation_size(partition_table_oid) AS total_relation_size_in_bytes FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname'
+            query = 'SELECT relname, floor(reltuples) AS reltuples, pg_total_relation_size(partition_table_oid) AS total_relation_size_in_bytes, is_frozen FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname'
         else:
-            query = 'SELECT relname, floor(reltuples) AS reltuples, NULL AS total_relation_size_in_bytes FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname'
+            query = 'SELECT relname, floor(reltuples) AS reltuples, NULL AS total_relation_size_in_bytes, is_frozen FROM rolling_window.list_partitions(%(schema)s, %(table)s) ORDER BY relname'
         if descending:
             query += ' DESCENDING'
         cursor.execute(query, {'schema': self.schema, 'table': self.table})
@@ -831,6 +835,9 @@ RETURNING relid,
             l.debug('Considering %s.%s for freezing.', self.schema, p.partition_table_name)
             if p.is_limbo or p.lower_bound is None:
                 l.debug('Skipping partition %s.%s since is_limbo or no lower_bound.', self.schema, p.partition_table_name)
+                continue
+            if p.is_frozen:
+                l.debug('Skipping partition %s.%s since all freezable columns already have bound constraints.', self.schema, p.partition_table_name)
                 continue
             if p.partition_table_name > h:
                 l.debug('Highest freezable is %s. Stopping.', h)

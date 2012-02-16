@@ -597,6 +597,7 @@ IS 'Move one partitions worth of data from the parent to a partition table. Move
 ---------------------------------------------------------------------
 CREATE TABLE list_partitions_result (
     partition_table_oid oid,
+    is_frozen boolean,
     CONSTRAINT no_rows CHECK (partition_table_oid = 0)
 ) INHERITS (pg_catalog.pg_class);
 
@@ -614,22 +615,37 @@ CREATE OR REPLACE FUNCTION list_partitions(
     parent_namespace name,
     parent name
 ) RETURNS SETOF rolling_window.list_partitions_result AS $definition$
-SELECT c.*,
-       c.oid AS partition_table_oid
-FROM pg_catalog.pg_class c
-WHERE c.oid IN
-    (
-        SELECT i.inhrelid FROM pg_catalog.pg_inherits i
-        WHERE i.inhparent =
+DECLARE
+    l_result rolling_window.list_partitions_result;
+    lower_bound_result bigint[];
+BEGIN
+    FOR l_result IN SELECT c.*, c.oid AS partition_table_oid, FALSE AS is_frozen
+        FROM pg_catalog.pg_class c
+        WHERE c.oid IN
             (
-                SELECT pc.oid
-                FROM pg_catalog.pg_class pc
-                INNER JOIN pg_catalog.pg_namespace n ON (pc.relnamespace = n.oid)
-                WHERE pc.relname = $2
-                  AND n.nspname = $1
+                SELECT i.inhrelid FROM pg_catalog.pg_inherits i
+                WHERE i.inhparent =
+                    (
+                        SELECT pc.oid
+                        FROM pg_catalog.pg_class pc
+                        INNER JOIN pg_catalog.pg_namespace n ON (pc.relnamespace = n.oid)
+                        WHERE pc.relname = parent
+                          AND n.nspname = parent_namespace
+                    )
             )
-    )
-$definition$ LANGUAGE sql;
+    LOOP
+        lower_bound_result := regexp_matches(l_result.relname, E'.*_(\\d+)$');
+        IF lower_bound_result IS NOT NULL
+        THEN
+            IF EXISTS ( SELECT 1 FROM rolling_window.columns_missing_constraints(parent_namespace, parent, lower_bound_result[1]) )
+            THEN
+                l_result.is_frozen := TRUE;
+            END IF;
+        END IF;
+        RETURN NEXT l_result;
+    END LOOP;
+END;
+$definition$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION list_partitions(name, name)
 IS 'Return pg_catalog.pg_class entries for child tables.';
 
@@ -666,7 +682,7 @@ BEGIN
         ORDER BY p.relname DESC
     LOOP
         IF highest_partition IS NULL
-    THEN
+        THEN
             highest_partition := current_partition;
         END IF;
         EXIT WHEN reltuples > 0;    -- reltuples = 0 means known empty
@@ -942,6 +958,26 @@ CREATE OR REPLACE FUNCTION freeze_partition(
     lower_bound bigint
 ) RETURNS SETOF name AS $definition$
 DECLARE
+    freeze_column name;
+BEGIN
+    FOR freeze_column IN SELECT f FROM rolling_window.columns_missing_constraints(parent_namespace, parent, lower_bound)
+    LOOP
+        RETURN NEXT rolling_window.constrain_partition(parent_namespace, parent, lower_bound, freeze_column);
+    END LOOP;
+END;
+$definition$ LANGUAGE plpgsql;
+COMMENT ON FUNCTION freeze_partition(name, name, bigint)
+IS 'Add any missing boundary constraints for all columns listed in columns_to_freeze for the table. Deprecated since it does all of them in a single transaction.';
+
+
+
+---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION columns_missing_constraints(
+    parent_namespace name,
+    parent name,
+    lower_bound bigint
+) RETURNS SETOF name AS $definition$
+DECLARE
     parent_oid oid;
     child_oid oid;
     namespace_oid oid;
@@ -972,12 +1008,12 @@ BEGIN
           AND n.nspname = parent_namespace;
     FOR freeze_column IN EXECUTE missing_constraint_query_str USING parent_oid, namespace_oid, child_oid
     LOOP
-        RETURN NEXT rolling_window.constrain_partition(parent_namespace, parent, lower_bound, freeze_column);
+        RETURN NEXT freeze_column;
     END LOOP;
 END;
 $definition$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION freeze_partition(name, name, bigint)
-IS 'Add any missing boundary constraints for all columns listed in columns_to_freeze for the table. ';
+IS 'List columns that could be constrained, but for which there is not yet a bound_ constraint.';
 
 
 ---------------------------------------------------------------------
@@ -1047,19 +1083,21 @@ DECLARE
     highest_freezable name;
     child_relid oid;
     child_name name;
+    is_frozen boolean;
     new_constraint name;
     f_result rolling_window.freeze_result;
     lower_bound bigint;
     rows_sent_to_limbo bigint;
 BEGIN
     highest_freezable := rolling_window.highest_freezable(parent_namespace, parent);
-    FOR child_relid, child_name IN
-        SELECT p.partition_table_oid, p.relname
+    FOR child_relid, child_name, is_frozen IN
+        SELECT p.partition_table_oid, p.relname, p.is_frozen
         FROM rolling_window.list_partitions(parent_namespace, parent) AS p
         WHERE p.relname ~ (parent || E'_\\d+$')
           AND p.relname <= highest_freezable
         ORDER BY p.relname
     LOOP
+        CONTINUE WHEN is_frozen;
         lower_bound := rolling_window.lower_bound_from_child_name(child_name);
         rows_sent_to_limbo := rolling_window.move_data_below_lower_bound_overlap_to_limbo(parent_namespace, parent, lower_bound);
         FOR new_constraint IN
