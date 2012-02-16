@@ -223,6 +223,7 @@ DECLARE
     start_bound bigint;
     stop_bound bigint;
     select_bounds_str text;
+    lower_bound bigint;
     child_name name;
 BEGIN
     SELECT m.step, m.attname
@@ -241,8 +242,8 @@ BEGIN
         min_value := manual_min;
         max_value := manual_max;
     ELSE
-        manual_min_str := CAST(manual_min AS text);
-        manual_max_str := CAST(manual_max AS text);
+        manual_min_str := CAST(manual_min AS text) || '::bigint';
+        manual_max_str := CAST(manual_max AS text) || '::bigint';
         select_bounds_str := 'SELECT COALESCE(' || quote_nullable(manual_min_str) || ', min(' || quote_ident(attname) || ')), '
             || 'COALESCE(' || quote_nullable(manual_max_str) || ', max(' || quote_ident(attname)
             || ')) FROM ONLY ' || quote_ident(parent_namespace) || '.' || quote_ident(parent);
@@ -250,12 +251,12 @@ BEGIN
         IF min_value IS NULL OR max_value IS NULL
         THEN
             min_value := -1;
-            max_value := -1;
+            max_value := -9223372036854775808;
         END IF;
     END IF;
     start_bound := min_value - min_value % step;
     stop_bound := max_value - max_value % step;
-    FOR lower_bound IN start_bound..stop_bound BY step
+    WHILE start_bound <= stop_bound
     LOOP
         -- does the partition already exist?
         child_name := rolling_window.child_name(parent, lower_bound);
@@ -263,6 +264,7 @@ BEGIN
         THEN
             RETURN NEXT rolling_window.add_partition(parent_namespace, parent, lower_bound);
         END IF;
+        start_bound := start_bound + step;
     END LOOP;
 END;
 $definition$ LANGUAGE plpgsql;
