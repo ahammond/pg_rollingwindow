@@ -597,6 +597,7 @@ IS 'Move one partitions worth of data from the parent to a partition table. Move
 ---------------------------------------------------------------------
 CREATE TABLE list_partitions_result (
     partition_table_oid oid,
+    is_frozen boolean,
     CONSTRAINT no_rows CHECK (partition_table_oid = 0)
 ) INHERITS (pg_catalog.pg_class);
 
@@ -614,22 +615,37 @@ CREATE OR REPLACE FUNCTION list_partitions(
     parent_namespace name,
     parent name
 ) RETURNS SETOF rolling_window.list_partitions_result AS $definition$
-SELECT c.*,
-       c.oid AS partition_table_oid
-FROM pg_catalog.pg_class c
-WHERE c.oid IN
-    (
-        SELECT i.inhrelid FROM pg_catalog.pg_inherits i
-        WHERE i.inhparent =
+DECLARE
+    l_result rolling_window.list_partitions_result;
+    lower_bound_result bigint[];
+BEGIN
+    FOR l_result IN SELECT c.*, c.oid AS partition_table_oid, FALSE AS is_frozen
+        FROM pg_catalog.pg_class c
+        WHERE c.oid IN
             (
-                SELECT pc.oid
-                FROM pg_catalog.pg_class pc
-                INNER JOIN pg_catalog.pg_namespace n ON (pc.relnamespace = n.oid)
-                WHERE pc.relname = $2
-                  AND n.nspname = $1
+                SELECT i.inhrelid FROM pg_catalog.pg_inherits i
+                WHERE i.inhparent =
+                    (
+                        SELECT pc.oid
+                        FROM pg_catalog.pg_class pc
+                        INNER JOIN pg_catalog.pg_namespace n ON (pc.relnamespace = n.oid)
+                        WHERE pc.relname = parent
+                          AND n.nspname = parent_namespace
+                    )
             )
-    )
-$definition$ LANGUAGE sql;
+    LOOP
+        lower_bound_result := regexp_matches(l_result.relname, E'.*_(\\d+)$');
+        IF lower_bound_result IS NOT NULL
+        THEN
+            IF EXISTS ( SELECT 1 FROM rolling_window.columns_missing_constraints(parent_namespace, parent, lower_bound_result[1]) )
+            THEN
+                l_result.is_frozen := TRUE;
+            END IF;
+        END IF;
+        RETURN NEXT l_result;
+    END LOOP;
+END;
+$definition$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION list_partitions(name, name)
 IS 'Return pg_catalog.pg_class entries for child tables.';
 
