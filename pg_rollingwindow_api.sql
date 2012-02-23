@@ -962,7 +962,7 @@ CREATE OR REPLACE FUNCTION freeze_partition(
 DECLARE
     freeze_column name;
 BEGIN
-    FOR freeze_column IN SELECT f FROM rolling_window.columns_missing_constraints(parent_namespace, parent, lower_bound)
+    FOR freeze_column IN SELECT f.c FROM rolling_window.columns_missing_constraints(parent_namespace, parent, lower_bound) AS f(c)
     LOOP
         RETURN NEXT rolling_window.constrain_partition(parent_namespace, parent, lower_bound, freeze_column);
     END LOOP;
@@ -970,7 +970,6 @@ END;
 $definition$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION freeze_partition(name, name, bigint)
 IS 'Add any missing boundary constraints for all columns listed in columns_to_freeze for the table. Deprecated since it does all of them in a single transaction.';
-
 
 
 ---------------------------------------------------------------------
