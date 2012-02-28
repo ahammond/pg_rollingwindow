@@ -139,7 +139,7 @@ BEGIN
     END IF;
     child := rolling_window.child_name(parent, lower_bound);
     upper_bound := lower_bound + step - 1;
-    EXECUTE format($$CREATE TABLE %1$I.%2$I ( CHECK ( %3$I BETWEEN %4$L AND %5$L ) ) INHERITS ( %1%I.%6%I )$$,
+    EXECUTE format($$CREATE TABLE %1$I.%2$I ( CHECK ( %3$I BETWEEN %4$L AND %5$L ) ) INHERITS ( %1$I.%6$I )$$,
         parent_namespace, child, attname, lower_bound, upper_bound, parent);
     RETURN child;
 END;
