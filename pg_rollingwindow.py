@@ -1021,7 +1021,7 @@ def freeze(options):
         if options.column is not None:  # Configuration mode
             freeze_column(options)
         else:
-            freeze_table(options.db, options.schema, options.table, options.cluster)
+            freeze_table(options.db, options.schema, options.table, options.cluster, options.freeze_after_cluster)
     else:
         if options.column is not None:
             l.warn('Freeze column defined, but no table defined. If you want to define freeze options on a column, you must also name the table.')
