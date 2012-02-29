@@ -62,7 +62,7 @@ SELECT rolling_window.child_name('parent_name', 123) ;
 
 SELECT * FROM rolling_window.min_max_in_parent_only('public', 'foo') ;
 
-SELECT p FROM rolling_window.add_partitions_for_data_range('public', 'foo', NULL, NULL) AS a(p) ;
+SELECT a.p FROM rolling_window.add_partitions_for_data_range('public', 'foo', NULL, NULL) AS a(p) ;
 
 -- clone_indexes, but not to_limbo
 SELECT * FROM rolling_window.move_data_to_partition('public', 'foo', 10, True, False);

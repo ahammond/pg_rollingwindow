@@ -242,12 +242,9 @@ BEGIN
         min_value := manual_min;
         max_value := manual_max;
     ELSE
-        manual_min_str := CAST(manual_min AS text) || '::bigint';
-        manual_max_str := CAST(manual_max AS text) || '::bigint';
-        select_bounds_str := 'SELECT COALESCE(' || quote_nullable(manual_min_str) || ', min(' || quote_ident(attname) || ')), '
-            || 'COALESCE(' || quote_nullable(manual_max_str) || ', max(' || quote_ident(attname)
-            || ')) FROM ONLY ' || quote_ident(parent_namespace) || '.' || quote_ident(parent);
-        EXECUTE select_bounds_str INTO min_value, max_value;
+        EXECUTE format($fmt$SELECT COALESCE(%L::bigint, min(%I)), COALESCE(%L::bigint, max(%I)) FROM ONLY %I.%I$fmt$,
+                       manual_min_str, attname, manual_max_str, attname, parent_namespace, parent)
+            INTO min_value, max_value;
         IF min_value IS NULL OR max_value IS NULL
         THEN
             min_value := -1;
@@ -259,10 +256,10 @@ BEGIN
     WHILE start_bound <= stop_bound
     LOOP
         -- does the partition already exist?
-        child_name := rolling_window.child_name(parent, lower_bound);
+        child_name := rolling_window.child_name(parent, start_bound);
         IF child_name NOT IN (SELECT p.relname FROM rolling_window.list_partitions(parent_namespace, parent) AS p)
         THEN
-            RETURN NEXT rolling_window.add_partition(parent_namespace, parent, lower_bound);
+            RETURN NEXT rolling_window.add_partition(parent_namespace, parent, start_bound);
         END IF;
         start_bound := start_bound + step;
     END LOOP;
