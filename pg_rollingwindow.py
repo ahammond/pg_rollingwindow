@@ -240,32 +240,28 @@ class PartitionDumper(PgToolCaller):
             l.info('Parent table is eligible')
             yield EligiblePartition(r.table, schema_only=True)
 
-        if highest_freezable is not None:
-            for p in r.partitions():
-                l.debug('Considering %s for eligibility', p.partition_table_name)
-                if p.partition_table_name.endswith('_limbo'):
-                    l.debug('Skipping limbo partition')
-                    continue
-                match = self.partition_pattern(r).match(p.partition_table_name)
-                if match is None:
-                    l.warning('Skipping strange partition: %s', p.partition_table_name)
-                    continue
-                partition_number = int(match.group('number'))
-                if partition_number <= r.last_partition_dumped:
-                    l.debug('I think I already dumped %s since %d is less than %d', p.partition_table_name, partition_number, r.last_partition_dumped)
-                    continue
-                if not p.is_frozen:
-                    l.debug('Skipping %s because it is freezable but is not yet frozen', p.partition_table_name)
-                    continue
-                if p.partition_table_name > highest_freezable:      # we can get away with a string comparison since 0 padding of child names
-                    l.debug('%s is higher than %s, so we have dumped all the freezable tables.', p.partition_table_name, highest_freezable)
-                    break
-                #TODO: what about checking to see if a dumpfile or partial already exists? (no clobber)
-                l.debug('%s looks eligible', p.partition_table_name)
-                yield EligiblePartition(p.partition_table_name, schema_only=False)
-                #TODO: would it be better to fork these off in parallel?
-                # That would make keeping track of last_partition_dumped a little trickier. What if one fails?
-                # I think the solution will involve parallel pg_dump, which should be in pg 9.2. So, hold off until then.
+        for p in r.partitions():
+            l.debug('Considering %s for eligibility', p.partition_table_name)
+            if p.partition_table_name.endswith('_limbo'):
+                l.debug('Skipping limbo partition')
+                continue
+            match = self.partition_pattern(r).match(p.partition_table_name)
+            if match is None:
+                l.warning('Skipping strange partition: %s', p.partition_table_name)
+                continue
+            partition_number = int(match.group('number'))
+            if partition_number <= r.last_partition_dumped:
+                l.debug('I think I already dumped %s since %d is less than %d', p.partition_table_name, partition_number, r.last_partition_dumped)
+                continue
+            if not p.is_frozen:
+                l.debug('Skipping %s because it is freezable but is not yet frozen', p.partition_table_name)
+                continue
+            #TODO: what about checking to see if a dumpfile or partial already exists? (no clobber)
+            l.debug('%s looks eligible', p.partition_table_name)
+            yield EligiblePartition(p.partition_table_name, schema_only=False)
+            #TODO: would it be better to fork these off in parallel?
+            # That would make keeping track of last_partition_dumped a little trickier. What if one fails?
+            # I think the solution will involve parallel pg_dump, which should be in pg 9.2. So, hold off until then.
 
     def restore_file(self, r, filename):
         l = getLogger('PartitionDumper.restore_file')
