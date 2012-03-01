@@ -1157,13 +1157,10 @@ CREATE OR REPLACE FUNCTION unconstrain_column(
 DECLARE
     child name;
     name_of_constraint name;
-    constraint_sql text;
 BEGIN
     child := rolling_window.child_name(parent, lower_bound);
     name_of_constraint := 'bound_' || column_to_be_constrained;
-    constraint_sql := 'ALTER TABLE ' ||  quote_ident(parent_namespace) || '.' || quote_ident(child)
-        || ' DROP CONSTRAINT IF EXISTS ' || quote_ident(name_of_constraint);
-    EXECUTE constraint_sql;
+    EXECUTE format($$ALTER TABLE %I.%I DROP CONSTRAINT IF EXISTS %I$$, parent_namespace, child, name_of_constraint);
     RETURN name_of_constraint;
 END;
 $definition$ LANGUAGE plpgsql;
