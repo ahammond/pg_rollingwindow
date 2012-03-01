@@ -1225,7 +1225,6 @@ DECLARE
     limbo_name name;
     lower_bound bigint;
     limbo_count bigint;
-    select_sql text;
     l_result rolling_window.limbo_result;
 BEGIN
     SELECT m.step, m.attname
@@ -1238,11 +1237,9 @@ BEGIN
 
     limbo_name := parent || '_limbo';
 
-    select_sql := format($$SELECT %I - %I %% %L AS lower_bound, count(*) AS limbo_count
-FROM %I.%I GROUP BY 1$$, attname, attname, step, parent_namespace, limbo_name);
-
     FOR lower_bound, limbo_count IN
-        EXECUTE select_sql
+        EXECUTE format($$SELECT %I - %I %% %L AS lower_bound, count(*) AS limbo_count FROM %I.%I GROUP BY 1$$,
+                       attname, attname, step, parent_namespace, limbo_name)
     LOOP
         l_result := ROW(lower_bound, limbo_count);
         RETURN NEXT l_result;
