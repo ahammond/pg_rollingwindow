@@ -418,9 +418,7 @@ DECLARE
     child name;
     attname name;
     step bigint;
-    insert_str text;
     insert_count bigint;
-    delete_str text;
     delete_count bigint;
     index_str text;
     best_index_name name;
@@ -428,7 +426,6 @@ DECLARE
     index_is_unique bigint;
     best_index_position bigint;
     index_position bigint;
-    alter_str text;
 BEGIN
     SELECT m.attname, m.step
         INTO attname, step
@@ -444,17 +441,12 @@ BEGIN
         child := rolling_window.child_name(parent, lower_bound);
     END IF;
     upper_bound = lower_bound + step - 1;
-    insert_str := 'INSERT INTO ' || quote_ident(parent_namespace) || '.' || quote_ident(child)
-        || ' SELECT * FROM ONLY ' || quote_ident(parent_namespace) || '.' || quote_ident(parent)
-        || ' WHERE ' || quote_ident(attname) || ' BETWEEN $1 AND $2';
-    EXECUTE insert_str USING lower_bound, upper_bound;
+    EXECUTE format($fmt$INSERT INTO %I.%I SELECT * FROM ONLY %I.%I WHERE %I BETWEEN $1 AND $2$fmt$,
+                   parent_namespace, child, parent_namespace, parent, attname)
+        USING lower_bound, upper_bound;
     GET DIAGNOSTICS insert_count = ROW_COUNT;
-    delete_str := 'DELETE FROM ONLY ' || quote_ident(parent_namespace) || '.' || quote_ident(parent)
-        || ' WHERE ' || quote_ident(attname)
-        || ' IN ( SELECT ' || quote_ident(attname)
-        || ' FROM ' || quote_ident(parent_namespace) || '.' || quote_ident(child)
-        || ')';
-    EXECUTE delete_str;
+    EXECUTE format($fmt$DELETE FROM ONLY %I.%I WHERE %I IN (SELECT %I FROM %I.%I)$fmt$,
+                   parent_namespace, parent, attname, attname, parent_namespace, child);
     GET DIAGNOSTICS delete_count = ROW_COUNT;
     IF insert_count != delete_count
     THEN
@@ -509,9 +501,7 @@ BEGIN
 
         IF best_index_name IS NOT NULL
         THEN
-            alter_str := 'ALTER TABLE ' || quote_ident(parent_namespace) || '.' || quote_ident(child)
-                || ' CLUSTER ON ' || quote_ident(best_index_name);
-            EXECUTE alter_str;
+            EXECUTE format($fmt$ALTER TABLE %I.%I CLUSTER ON %I$fmt$, parent_namespace, child, best_index_name );
         END IF;
     END IF;
     RETURN delete_count;
