@@ -1249,3 +1249,60 @@ END;
 $definition$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION limbo_analysis(name, name)
 IS 'How many records are in limbo that would otherwise belong to a given partition';
+
+
+---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION retry_from_limbo(
+    parent_namespace name,
+    parent name,
+    lower_bound bigint
+) RETURNS bigint AS $definition$
+DECLARE
+    child name;
+    step bigint;
+    attname name;
+    upper_bound bigint;
+    insert_count bigint;
+    delete_count bigint;
+    rows_sent_to_limbo bigint;
+BEGIN
+    child := rolling_window.child_name(parent, lower_bound);
+
+    SELECT m.step, m.attname
+        INTO step, attname
+        FROM rolling_window.maintained_table m
+        INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
+        INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
+        WHERE c.relname = parent
+        AND n.nspname = parent_namespace;
+
+    upper_bound := lower_bound + step - 1;
+
+    PERFORM rolling_window.unfreeze_partition(parent_namespace, parent, lower_bound);
+
+    EXECUTE format($fmt$INSERT INTO %1$I.%2$I SELECT * FROM %1$I.%3$I WHERE %4$I BETWEEN $1 AND $2$fmt$,
+        parent_namespace, child, parent || '_limbo', attname)
+        USING lower_bound, upper_bound;
+    GET DIAGNOSTICS insert_count = ROW_COUNT;
+
+    EXECUTE format($fmt$DELETE FROM %I.%I WHERE %I BETWEEN $1 AND $2$fmt$,
+        parent_namespace, parent || '_limbo', attname)
+        USING lower_bound, upper_bound;
+    GET DIAGNOSTICS delete_count = ROW_COUNT;
+
+    IF insert_count != delete_count
+    THEN
+        RAISE EXCEPTION 'Inserted % rows, but attempted to delete % rows.', insert_count, delete_count;
+    END IF;
+
+    rows_sent_to_limbo := rolling_window.move_data_below_lower_bound_overlap_to_limbo(parent_namespace, parent, lower_bound);
+
+    RAISE NOTICE 'got here';
+
+    PERFORM rolling_window.freeze_partition(parent_namespace, parent, lower_bound);
+
+    RETURN insert_count - rows_sent_to_limbo;   -- rescued are the ones that don't go back to limbo
+END;
+$definition$ LANGUAGE plpgsql;
+COMMENT ON FUNCTION retry_from_limbo(name, name, bigint)
+IS 'Unfreeze partition, pull records from limbo to unfrozen partition and re-freeze. Returns number of rows rescued.';
