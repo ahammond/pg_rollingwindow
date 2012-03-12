@@ -520,7 +520,6 @@ CREATE OR REPLACE FUNCTION move_highest_data_to_partition(
 DECLARE
     attname name;
     step bigint;
-    select_max_value_str text;
     max_value bigint;
     lower_bound bigint;
 BEGIN
@@ -531,9 +530,7 @@ BEGIN
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
         WHERE c.relname = parent
           AND n.nspname = parent_namespace;
-    select_max_value_str := 'SELECT max(' || quote_ident(attname)
-        || ') FROM ONLY ' || quote_ident(parent_namespace) || '.' || quote_ident(parent);
-    EXECUTE select_max_value_str INTO max_value;
+    EXECUTE format($fmt$SELECT max(%I) FROM ONLY %I.%I$fmt$, attname, parent_namespace, parent) INTO max_value;
     IF max_value IS NULL
     THEN
         RETURN 0;
