@@ -897,29 +897,22 @@ CREATE OR REPLACE FUNCTION constrain_partition(
 DECLARE
     child name;
     name_of_constraint name;
-    find_bounds_sql text;
     constraint_upper_bound_as_text text;
     constraint_lower_bound_as_text text;
-    constraint_sql text;
 BEGIN
     child := rolling_window.child_name(parent, lower_bound);
     name_of_constraint := 'bound_' || column_to_be_constrained;
     -- TODO: this relies on the text representation of the columns being cast to the appropriate type. sketchy.
-    find_bounds_sql := 'SELECT CAST(min(' || quote_ident(column_to_be_constrained) || ') AS text) AS lower_bound, '
-        || 'CAST(max(' || quote_ident(column_to_be_constrained) || ') AS text) AS upper_bound '
-        || 'FROM ' || quote_ident(parent_namespace) || '.' || quote_ident(child);
-    EXECUTE find_bounds_sql INTO constraint_lower_bound_as_text, constraint_upper_bound_as_text;
+    EXECUTE format($fmt$SELECT CAST(min(%I) AS text) AS lower_bound, CAST(max(%I) AS text) AS upper_bound FROM %I.%I$fmt$,
+                   column_to_be_constrained, column_to_be_constrained, parent_namespace, child)
+        INTO constraint_lower_bound_as_text, constraint_upper_bound_as_text;
     IF constraint_upper_bound_as_text IS NULL
     THEN
         RAISE EXCEPTION 'max(%) is NULL. Is the table empty, or does it have any non-null values in the column to be constrained?', column_to_be_constrained;
     END IF;
-    constraint_sql := 'ALTER TABLE ' ||  quote_ident(parent_namespace) || '.' || quote_ident(child)
-        || ' ADD CONSTRAINT ' || quote_ident(name_of_constraint)
-        || ' CHECK (' || quote_ident(column_to_be_constrained)
-        || ' BETWEEN ' || quote_literal(constraint_lower_bound_as_text)
-        || ' AND ' || quote_literal(constraint_upper_bound_as_text)
-        || ')';
-    EXECUTE constraint_sql;
+    EXECUTE format($fmt$ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK(%I BETWEEN %L AND %L)$fmt$,
+                   parent_namespace, child, name_of_constraint, column_to_be_constrained,
+                   constraint_lower_bound_as_text, constraint_upper_bound_as_text);
     RETURN name_of_constraint;
 END;
 $definition$ LANGUAGE plpgsql;
