@@ -700,10 +700,9 @@ CREATE OR REPLACE FUNCTION trim_expired_table_partitions(
 AS $definition$
 DECLARE
     partition_table_oid oid;
-    partition_table_name name;
+    child name;
     non_empty_partitions_to_keep bigint;
     reltuples real;
-    drop_str text;
     total_relation_size_in_bytes bigint;
     t_result rolling_window.trim_result;
 BEGIN
@@ -719,7 +718,7 @@ BEGIN
         RAISE EXCEPTION 'table not found in rolling_window.maintained_table';
     END IF;
     -- count down through the children to find partitions that exceed our retention policy
-    FOR partition_table_oid, partition_table_name, reltuples IN
+    FOR partition_table_oid, child, reltuples IN
         SELECT p.partition_table_oid, p.relname, p.reltuples
         FROM rolling_window.list_partitions(parent_namespace, parent) AS p
         WHERE p.relname ~ (parent || E'_\\d+$')
@@ -730,9 +729,8 @@ BEGIN
             total_relation_size_in_bytes := pg_total_relation_size(partition_table_oid);
             -- TODO: would it be better to first ALTER TABLE partition_table NO INHERIT then DROP?
             -- Probably not, unless we decouple the ALTER from the DROP transaction.
-            drop_str := 'DROP TABLE ' || partition_table_name;
-            EXECUTE drop_str;
-            t_result := ROW(partition_table_name, reltuples, total_relation_size_in_bytes);
+            EXECUTE format($fmt$DROP TABLE %I.%I$fmt$, parent_namespace, child);
+            t_result := ROW(child, reltuples, total_relation_size_in_bytes);
             RETURN NEXT t_result;
         ELSE
             IF reltuples > 0    -- reltuples = 0 means known empty
