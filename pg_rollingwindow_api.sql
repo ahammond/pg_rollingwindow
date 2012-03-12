@@ -104,7 +104,7 @@ BEGIN
     THEN
         RAISE EXCEPTION 'table not found in rolling_window.maintained_table';
     END IF;
-    EXECUTE format($$SELECT min(%1$I), max(%1$I) FROM ONLY %2$I.%3$I $$, attname, parent_namespace, parent)
+    EXECUTE format($fmt$SELECT min(%1$I), max(%1$I) FROM ONLY %2$I.%3$I $fmt$, attname, parent_namespace, parent)
     INTO min_value, max_value;
 END;
 $definition$ LANGUAGE plpgsql;
@@ -137,7 +137,7 @@ BEGIN
     END IF;
     child := rolling_window.child_name(parent, lower_bound);
     upper_bound := lower_bound + step - 1;
-    EXECUTE format($$CREATE TABLE %1$I.%2$I ( CHECK ( %3$I BETWEEN %4$L AND %5$L ) ) INHERITS ( %1$I.%6$I )$$,
+    EXECUTE format($fmt$CREATE TABLE %1$I.%2$I ( CHECK ( %3$I BETWEEN %4$L AND %5$L ) ) INHERITS ( %1$I.%6$I )$fmt$,
         parent_namespace, child, attname, lower_bound, upper_bound, parent);
     RETURN child;
 END;
@@ -163,7 +163,7 @@ BEGIN
     THEN
         RETURN NULL;    -- already exists.
     END IF;
-    EXECUTE format($$CREATE TABLE %1$I.%2$I () INHERITS (%1$I.%3$I)$$, parent_namespace, child, parent);
+    EXECUTE format($fmt$CREATE TABLE %1$I.%2$I () INHERITS (%1$I.%3$I)$fmt$, parent_namespace, child, parent);
 
     PERFORM * FROM rolling_window.clone_indexes_to_partition(parent_namespace, parent, child);
     RETURN child;
@@ -859,7 +859,6 @@ $fmt$SELECT $$'$$ || old_upper || $$'::$$ || pg_typeof(old_upper) AS old_upper_b
             USING prior_upper_bound_percentile;
         END IF;
 
-
         -- calculate the new lower bound
         boundary_math :=  'SELECT '
             || old_upper_bound || ' - ' || lower_bound_overlap
@@ -1157,7 +1156,7 @@ DECLARE
 BEGIN
     child := rolling_window.child_name(parent, lower_bound);
     name_of_constraint := 'bound_' || column_to_be_constrained;
-    EXECUTE format($$ALTER TABLE %I.%I DROP CONSTRAINT IF EXISTS %I$$, parent_namespace, child, name_of_constraint);
+    EXECUTE format($fmt$ALTER TABLE %I.%I DROP CONSTRAINT IF EXISTS %I$fmt$, parent_namespace, child, name_of_constraint);
     RETURN name_of_constraint;
 END;
 $definition$ LANGUAGE plpgsql;
@@ -1235,7 +1234,7 @@ BEGIN
     limbo_name := parent || '_limbo';
 
     FOR lower_bound, limbo_count IN
-        EXECUTE format($$SELECT %I - %I %% %L AS lower_bound, count(*) AS limbo_count FROM %I.%I GROUP BY 1$$,
+        EXECUTE format($fmt$SELECT %I - %I %% %L AS lower_bound, count(*) AS limbo_count FROM %I.%I GROUP BY 1$fmt$,
                        attname, attname, step, parent_namespace, limbo_name)
     LOOP
         l_result := ROW(lower_bound, limbo_count);
