@@ -1,5 +1,3 @@
--- do not allow inserts into parent tables.
-
 CREATE SCHEMA rolling_window;
 SET search_path TO rolling_window,public;
 
@@ -222,7 +220,6 @@ DECLARE
     max_value bigint;
     start_bound bigint;
     stop_bound bigint;
-    select_bounds_str text;
     lower_bound bigint;
     child_name name;
 BEGIN
