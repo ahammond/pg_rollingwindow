@@ -852,7 +852,7 @@ $fmt$SELECT $$'$$ || old_upper || $$'::$$ || pg_typeof(old_upper) AS old_upper_b
         -- generate a where clause factor and append it to the current clause.
         IF where_clause IS NULL
         THEN
-            where_clause := factor;
+            where_clause := ' WHERE ' || factor;
         ELSE
             where_clause := where_clause || ' AND ' || factor;
         END IF;
@@ -866,14 +866,13 @@ $fmt$SELECT $$'$$ || old_upper || $$'::$$ || pg_typeof(old_upper) AS old_upper_b
     -- move data out of child partition to limbo table
     child_name := rolling_window.child_name(parent, lower_bound);
 
-    insert_str := 'INSERT INTO ' || quote_ident(parent_namespace) || '.' || quote_ident(parent || '_limbo')
-        || ' SELECT * FROM ' || quote_ident(parent_namespace) || '.' || quote_ident(child_name)
-        || ' WHERE ' || where_clause;
+    insert_str := format($fmt$INSERT INTO %1$I.%2$I SELECT * FROM %1$I.%3$I$fmt$,
+                         parent_namespace, parent || '_limbo', child_name)
+        || where_clause;
     EXECUTE insert_str;
     GET DIAGNOSTICS insert_count = ROW_COUNT;
 
-    delete_str := 'DELETE FROM ' || quote_ident(parent_namespace) || '.' || quote_ident(child_name)
-        || ' WHERE ' || where_clause;
+    delete_str := format($fmt$DELETE FROM %I.%I$fmt$, parent_namespace, child_name) || where_clause;
     EXECUTE delete_str;
     GET DIAGNOSTICS delete_count = ROW_COUNT;
 
