@@ -1174,7 +1174,38 @@ BEGIN
 END;
 $definition$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION unfreeze_column(name, name, name)
-IS 'Remove boundary constraints for all columns ';
+IS 'Remove boundary constraints for a column for all partition tables';
+
+
+---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION unfreeze_partition(
+    parent_namespace name,
+    parent name,
+    lower_bound bigint
+) RETURNS SETOF name AS $definition$
+DECLARE
+    my_column_name name;
+BEGIN
+    FOR my_column_name IN
+        SELECT ctf.column_name
+        FROM rolling_window.columns_to_freeze ctf
+        WHERE ctf.relid = (SELECT m.relid
+            FROM rolling_window.maintained_table m
+            INNER JOIN pg_catalog.pg_class c ON (m.relid = c.oid)
+            INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
+            WHERE c.relname = parent
+              AND n.nspname = parent_namespace)
+    LOOP
+        RETURN NEXT rolling_window.unconstrain_column(
+                parent_namespace,
+                parent,
+                lower_bound,
+                my_column_name);
+    END LOOP;
+END;
+$definition$ LANGUAGE plpgsql;
+COMMENT ON FUNCTION unfreeze_partition(name, name, bigint)
+IS 'Remove all boundary constraints for a partition table';
 
 
 ---------------------------------------------------------------------
