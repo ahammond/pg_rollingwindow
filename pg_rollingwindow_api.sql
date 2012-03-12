@@ -554,7 +554,6 @@ DECLARE
     lower_bound bigint;
     attname name;
     step bigint;
-    select_min_value_str text;
 BEGIN
     SELECT m.attname, m.step
         INTO attname, step
@@ -563,9 +562,7 @@ BEGIN
         INNER JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
         WHERE c.relname = parent
           AND n.nspname = parent_namespace;
-    select_min_value_str := 'SELECT min(' || quote_ident(attname)
-        || ') FROM ONLY ' || quote_ident(parent_namespace) || '.' || quote_ident(parent);
-    EXECUTE select_min_value_str INTO min_value;
+    EXECUTE format($fmt$SELECT min(%I) FROM ONLY %I.%I$fmt$, attname, parent_namespace, parent) INTO min_value;
     IF min_value IS NULL
     THEN
         RETURN 0;
