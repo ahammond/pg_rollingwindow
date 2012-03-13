@@ -1297,8 +1297,6 @@ BEGIN
 
     rows_sent_to_limbo := rolling_window.move_data_below_lower_bound_overlap_to_limbo(parent_namespace, parent, lower_bound);
 
-    RAISE NOTICE 'got here';
-
     PERFORM rolling_window.freeze_partition(parent_namespace, parent, lower_bound);
 
     RETURN insert_count - rows_sent_to_limbo;   -- rescued are the ones that don't go back to limbo
