@@ -402,7 +402,7 @@ BEGIN
 END;
 $definition$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION clone_indexes_to_partition(name, name, name)
-IS 'Apply all the indexes on a parent table to a partition. Rather than specifying a lower_bound, this requires the child name to support working with limbo tables.';
+IS 'Apply all the indexes on a parent table to a partition. Rather than specifying a lower_bound, this requires the child name to support working with limbo tables. This will work with arbitrary table names.';
 
 
 ---------------------------------------------------------------------
