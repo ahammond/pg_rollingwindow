@@ -83,7 +83,7 @@ Probably not impossible, but certainly not trivial. Don't be evil when you name 
 
 ## INSTALLATION
 
-<code>
+<pre>
 export PGHOST=localhost
 export PGDATABASE=testdb
 
@@ -93,7 +93,7 @@ pg_rollingwindow.py add -t foo -c id -s 10000 -r 5000 -a 300
 
 pg_rollingwindow.py freeze -t foo -c rnd
 pg_rollingwindow.py freeze -t foo -c ts --overlap "'2 days'::interval" --prior_upper_bound_percentile 5
-</code>
+</pre>
 
 You have now conigured enough meta-data to get started. Next, you'll want to
 configure upstart jobs to maintain rolling, freezing and perhaps dumping of
