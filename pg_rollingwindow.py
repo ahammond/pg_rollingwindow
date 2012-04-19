@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 from datetime import datetime, timedelta
 from logging import getLogger
-from math import floor
-from optparse import OptionParser, OptionGroup, Values
+from optparse import OptionParser, OptionGroup
 from os import access, environ, listdir, rename, R_OK, W_OK
 from os.path import exists, isdir, isfile
 from os.path import join as path_join
@@ -10,7 +9,7 @@ from os.path import split as path_split
 from psycopg2 import connect, IntegrityError, ProgrammingError
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT, ISOLATION_LEVEL_READ_COMMITTED
 import re
-from subprocess import Popen, call
+from subprocess import call
 from time import sleep
 
 __author__ = 'Andrew Hammond <andrew.hammond@receipt.com>'
@@ -65,7 +64,7 @@ class PgToolCaller(object):
     legal_pg_arguments = ('username', 'host', 'port', 'sslmode' )   # database parameter is handled specially because of pg_dump
 
     def __init__(self, options, connection=None):
-        '''Create a partition dumper helper object.
+        """Create a partition dumper helper object.
 
         Used to dump and restore files, and importantly to figure out which are eligible or not.
 
@@ -73,7 +72,7 @@ class PgToolCaller(object):
         RollingTable objects for return.
         BUT the options passed must still include any database connection options required since
         we dump and restore by calling pg_dump and pg_restore, and they both need these parameters.
-        '''
+        """
         l = getLogger('PartitionDumper.__init__')
 
         if connection:
@@ -125,8 +124,7 @@ class SchemaInitializer(PgToolCaller):
             load_command.append(self.database)
 
         l.debug('load_command = %r', load_command)
-        return_code = call(load_command)
-        if return_code != 0:
+        if call(load_command):
             raise RuntimeError('psql failed!')
 
 
@@ -207,8 +205,7 @@ class PartitionDumper(PgToolCaller):
             dump_command.append(self.database)
 
         l.debug('dump_command = %r', dump_command)
-        return_code = call(dump_command)
-        if return_code != 0:
+        if call(dump_command):
             raise RuntimeError('pg_dump failed!')   # uh, is this a reasonable exception to use?
 
         # The usual case is that we're dumping a child table and should keep track,
@@ -279,8 +276,7 @@ class PartitionDumper(PgToolCaller):
         restore_command.append(filename)    # filename must be the last argument.
 
         l.debug('restore_command = %r', restore_command)
-        return_code = call(restore_command)
-        if return_code != 0:
+        if call(restore_command):
             raise RuntimeError('pg_restore failed!')
         # should I return the partition name? How do I know what was actually restored? Better return nothing for now.
 
@@ -687,7 +683,7 @@ RETURNING relid,
             rows_moved = cursor.fetchone()[0]
             l.info('Created partition %s and moved %s rows.', partition_created, rows_moved)
             self.rolls_since_last_vacuum += 1
-            if vacuum_parent_after_every > 0 and self.rolls_since_last_vacuum > vacuum_parent_after_every:
+            if 0 < vacuum_parent_after_every < self.rolls_since_last_vacuum:
                 self.rolls_since_last_vacuum = 0
                 parameters = {'schema': self.schema, 'table': self.table}
                 l.debug('Running VACUUM FULL on %(schema)s.%(table)s' % parameters)
@@ -720,7 +716,7 @@ RETURNING relid,
                     rows_moved = cursor.fetchone()[0]
                     l.info('Moved %s rows to %s.%s_limbo', rows_moved, self.schema, self.table)
                 self.rolls_since_last_vacuum += 1
-                if vacuum_parent_after_every > 0 and self.rolls_since_last_vacuum > vacuum_parent_after_every:
+                if 0 < vacuum_parent_after_every < self.rolls_since_last_vacuum:
                     self.rolls_since_last_vacuum = 0
                     parameters = {'schema': self.schema, 'table': self.table}
                     l.debug('Running VACUUM FULL on %(schema)s.%(table)s' % parameters)
@@ -1114,7 +1110,7 @@ List tables under management (or details about a specific table with the table p
     list [[-n <schema>] -t <table>] [<PostgreSQL options>]
 
 Adds table to the rolling window system for maintenance.
-    add [-n <schema>] -t <table> -c <column> -s <step> -r <retention> -a <advanced> [-f <freeze column> [-f ...]] [<PostgreSQL options>]
+    add [-n <schema>] -t <table> -c <column> -s <step> -r <retention> -a <advanced> [<PostgreSQL options>]
 
 Roll the table (or all maintained tables if no table parameter):
 Specifying the --vacuum_parent_after_every may help for initial rolls on systems with low disk.
