@@ -1,0 +1,100 @@
+# pg\_rollingwindow
+
+A tool to maintain rolling windows in PostgreSQL.
+
+## What do you mean by "Rolling Window"?
+
+A rolling window is tabular data with the following characteristics.
+* A FIFO retention policy (first in, first out)
+* A bigint not null column that is (generally) increasing over time, which
+can be used for partitioning.
+* Retention requirements can be defined by a lower bound on the partition
+column. In other words, "Keep everything where partition column is greater
+than max(partition column) - x."
+* The partition column does not need to be unique.
+* Neither does it need to have strong ordering for inserts.
+
+## How is this better than just inserting and deleting
+
+This approach reduces the disk io (and risk) around maintining really
+large tables by breaking them into smaller partition tables. Having
+partitioned the data, we may also take advantage of PostgreSQL's
+excellent Constraint Based Exclusion feature.
+
+## Tell Me More
+
+pg\_rollingwindows is designed to maintain a series of partition tables. It
+will automatically move data inserted into the parent table into the
+appropriate partition, however ideally the application will simply put the
+data in the appropriate partition table. Partitions are constrained on the
+partition column to prevent data being inserted into the wrong partition.
+Data that fails to be moved to it's partition for whatever reason ends up in
+the limbo table.
+
+To take further advantage of PostgreSQL's Constraint Based Exclusion feature,
+pg\_rollingwindows offers freezing functionality. Freezing applies post-hoc
+constraints on freezable partitions. Partitions become freezable when there
+are at least n partitions ahead of them which are not empty. This n is defined
+at table add time using the `--data_lag_window` parameter. When the freeze
+operation detects a freezable partition, it determins the minumum and maximum
+values of the freezable columns and creates a `bound_columnname` table
+constraint on the partition. The `--overlap` and
+`--prior_upper_bound_percentile` options allow for some customization of behavior
+around this freezing. Please read the fine code to see how these work.
+
+If you attempt to add data to a table that has been frozen, it may fail because
+it is outside the bound constraints. In these cases it will end up in the foo_limbo
+table. You have two choices at this point: either leave it in limbo (and take the
+performance hit), or un-freeze and re-freeze the partition. There are supporting
+functions in the `rolling_window` schema specifically to handle the analysis of
+limbo table data and re-freezing partitions.
+
+Data in your limbo is bad for performance as it can never be CBE excluded. You
+will want to manually review the data in your limbo table on a regular basis and
+keep that table clean. You could just delete data in limbo.
+Or, you could delete stuff older than the oldest partition (this seems reasonable).
+Or, you could create and manage your own partition tables to manage this data.
+
+## REQUIREMENTS
+* PostgreSQL 9.1 (uses the format() function)
+* Python 2.6 (possibly works with 2.5 or even 2.4, but... not tested)
+* psycopg2
+* Python unit testing (developers only)
+* Mock (http://www.voidspace.org.uk/python/mock/)
+* pgTAP (developers only)  TODO: add pgtap tests for the database api.
+
+## Limitations
+
+### Name Lengths
+
+PostgreSQL limits internal object names to an entirely reasonable 63 characters.
+pg_rollingwindows appends some pretty long strings to some of the names (for
+example, partition tables get an _17digit suffix). If you have super long names,
+you may have issues.
+
+### Index Cloning
+
+Index cloning will cause the add operation to fail while attempting to create the
+limbo partition (or clone indexes to partitions) in cases where either the index name,
+the table name or the column name involved contain either of the following strings:
+`" USING "` or `" ON "`. Note the leading and following spaces.
+Solving this would probably involve clever tricks with regex.
+Probably not impossible, but certainly not trivial. Don't be evil when you name objects.
+
+## INSTALLATION
+
+<code>
+export PGHOST=localhost
+export PGDATABASE=testdb
+
+pg_rollingwindow.py init
+
+pg_rollingwindow.py add -t foo -c id -s 10000 -r 5000 -a 300
+
+pg_rollingwindow.py freeze -t foo -c rnd
+pg_rollingwindow.py freeze -t foo -c ts --overlap "'2 days'::interval" --prior_upper_bound_percentile 5
+</code>
+
+You have now conigured enough meta-data to get started. Next, you'll want to
+configure upstart jobs to maintain rolling, freezing and perhaps dumping of
+your table. See the example upstart jobs included under the upstart directory.
