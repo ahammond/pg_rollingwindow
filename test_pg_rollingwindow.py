@@ -320,7 +320,7 @@ RETURNING relid,
         n += 1
         self.assertEqual('execute', method_calls[n][0])    # move_data_to_partition
         self.assertEqual(('SELECT rolling_window.move_data_to_partition(%(schema)s, %(table)s, %(lower_bound)s, %(clone_indexes)s, %(to_limbo)s)',
-                        {'clone_indexes': False, 'lower_bound': 30, 'schema': 'fake_schema', 'table': 'fake_table', 'to_limbo': False}),
+                        {'clone_indexes': True, 'lower_bound': 30, 'schema': 'fake_schema', 'table': 'fake_table', 'to_limbo': False}),
                         method_calls[n][1])
         n += 1
         self.assertEqual('fetchone', method_calls[n][0])
