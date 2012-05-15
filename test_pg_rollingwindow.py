@@ -274,6 +274,7 @@ RETURNING relid,
             (35, 36, 10), # min_max_in_parent_only
             ('created_30', ), # child_name
             (345, ), # rows moved
+            (), # indexes created
             (('reserve_40', ), ('reserve_50', )), # extend_table_reserve_partitions
             (('trimmed_60', 321, 432), ('trimmed_70', 543, 654)), # trim_expired_table_partitions
             ('1973-07-25 23:59:59 +00')
@@ -320,10 +321,17 @@ RETURNING relid,
         n += 1
         self.assertEqual('execute', method_calls[n][0])    # move_data_to_partition
         self.assertEqual(('SELECT rolling_window.move_data_to_partition(%(schema)s, %(table)s, %(lower_bound)s, %(clone_indexes)s, %(to_limbo)s)',
-                        {'clone_indexes': True, 'lower_bound': 30, 'schema': 'fake_schema', 'table': 'fake_table', 'to_limbo': False}),
+                        {'clone_indexes': False, 'lower_bound': 30, 'schema': 'fake_schema', 'table': 'fake_table', 'to_limbo': False}),
                         method_calls[n][1])
         n += 1
         self.assertEqual('fetchone', method_calls[n][0])
+        n += 1
+        self.assertEqual('execute', method_calls[n][0])
+        self.assertEqual(('SELECT new_index FROM rolling_window.clone_indexes_to_partition(%(schema)s, %(table)s, %(lower_bound)s) AS citp(new_index)',
+                              {'schema': 'fake_schema', 'table': 'fake_table', 'lower_bound': 30, }),
+            method_calls[n][1])
+        n += 1
+        self.assertEqual('fetchall', method_calls[n][0])
         n += 1
         self.assertEqual('execute', method_calls[n][0])    # move_data_to_partition
         self.assertEqual(('SELECT e.p FROM rolling_window.extend_table_reserve_partitions(%(schema)s, %(table)s) AS e(p)',
