@@ -9,7 +9,8 @@ from os.path import split as path_split
 from psycopg2 import connect, IntegrityError, ProgrammingError
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT, ISOLATION_LEVEL_READ_COMMITTED
 import re
-from subprocess import call
+from shlex import split as shlex_split
+from subprocess import call, check_call
 from time import sleep
 
 __author__ = 'Andrew Hammond <andrew.hammond@receipt.com>'
@@ -1096,6 +1097,28 @@ def repeat(action, options):
             sleep(wait_time.seconds)
 
 ##########################################################################
+def wrap_post_execute(verb, post_execute):
+    l = getLogger('post_execute')
+    command = shlex_split(post_execute)
+    def wrapped_verb(*args, **kwargs):
+        try:
+            verb(*args, **kwargs)
+        finally:
+            l.debug('Executing %r', command)
+            check_call(command)
+    return wrapped_verb
+
+##########################################################################
+def wrap_pre_execute(verb, pre_execute):
+    l = getLogger('pre_execute')
+    command = shlex_split(pre_execute)
+    def wrapped_verb(*args, **kwargs):
+        l.debug('Executing %r', command)
+        check_call(command)
+        verb(*args, **kwargs)
+    return wrapped_verb
+
+##########################################################################
 # Interactive commands
 actions = {
     'init': init,
@@ -1127,6 +1150,8 @@ The presence of the column paramater causes configuration behavior.
 Otherwise, this will apply bound constraints to all configured columns in all eligible partitions for the table (or all maintained tables if no table parameter).
 Specifying the --cluster parameter will cause the table to be clustered after freezing.
     freeze [[-n <schema>] -t <table>] [--cluster] [--freeze_after_cluster] [<PostgreSQL options>]
+Since freeze needs to take an AccessExclusive lock, you may need to wrap this with pre and post execute parameters
+    freeze ... --pre_execute "kill heavy process" --post_execute "restart heavy process"
 
 Cleanup and (re-)freeze all eligible partitions for the table (or all maintained tables if no table parameter).
 If a freeze_column and lower_bound_overlap are provided, apply that offset to the table.freeze_column,
@@ -1183,6 +1208,10 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
         help='directory where dumps of partitions will dropped / searched for when using dump or undump command')
     parser.add_option('--every_n_seconds',
         help='if specified, repeat the action until killed')
+    parser.add_option('--pre_execute',
+        help='if specified, a shell command to run before any verb. If used in conjunction with the every_n_seconds, this command will be run repeatedly for every invocation of the verb. If this command fails, the verb will not be executed. Neither will post-execute.')
+    parser.add_option('--post_execute',
+        help='if specified, a shell command to run after any verb. If used in conjunction with the every_n_seconds, this command will be run repeatedly for every invocation of the verb. If verb fails, this command will still be run. If pre-execute is specified and fails, this will not be run.')
 
     postgres_group = OptionGroup(parser, 'PostgreSQL connection options')
     postgres_group.add_option('-h', '--host',
@@ -1219,12 +1248,18 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
     action = actions.get(args.pop(0), None)
     if action is None:
         return parser.print_help()
+
+    if options.post_execute is not None:
+        action = wrap_post_execute(action, options.post_execute)
+
+    if options.pre_execute is not None:
+        action = wrap_pre_execute(action, options.pre_execute)
+
+    options.ensure_value('db', PgConnection(options))
+    if options.every_n_seconds is None:
+        return action(options)
     else:
-        options.ensure_value('db', PgConnection(options))
-        if options.every_n_seconds is None:
-            return action(options)
-        else:
-            repeat(action, options)
+        repeat(action, options)
 
 if __name__ == '__main__':
     main()
