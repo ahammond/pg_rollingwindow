@@ -701,9 +701,10 @@ RETURNING relid,
                                {'table': self.table, 'lower_bound': lower_bound})
                 partition = cursor.fetchone()[0]
                 try:
+                    # Do _NOT_ clone_indexes here. Instead do it in a separate transaction.
                     cursor.execute('SELECT rolling_window.move_data_to_partition(%(schema)s, %(table)s, %(lower_bound)s, %(clone_indexes)s, %(to_limbo)s)',
                                    {'schema': self.schema, 'table': self.table, 'lower_bound': lower_bound,
-                                    'clone_indexes': True, 'to_limbo': False})
+                                    'clone_indexes': False, 'to_limbo': False})
                     rows_moved = cursor.fetchone()[0]
                     l.info('Moved %s rows to partition %s.', rows_moved, partition)
                 except IntegrityError, e:
@@ -720,6 +721,10 @@ RETURNING relid,
                     parameters = {'schema': self.schema, 'table': self.table}
                     l.debug('Running VACUUM FULL on %(schema)s.%(table)s' % parameters)
                     cursor.execute('VACUUM FULL %(schema)s.%(table)s' % parameters)
+                cursor.execute('SELECT new_index FROM rolling_window.clone_indexes_to_partition(%(schema)s, %(table)s, %(lower_bound)s) AS citp(new_index)',
+                        {'schema': self.schema, 'table': self.table, 'lower_bound': lower_bound})
+                new_indexes = [x[0] for x in cursor.fetchall()]
+                l.debug('Added %d indexes to %s.%s: %r', cursor.rowcount, self.schema, self.table, new_indexes)
                 yield PartitionResult(self.MOVED, partition, rows_moved)
 
     def roll(self, vacuum_parent_after_every=0):

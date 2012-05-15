@@ -508,7 +508,7 @@ BEGIN
 END;
 $definition$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION move_data_to_partition(name, name, bigint, boolean, boolean)
-IS 'Given a table and a lower_bound, move data that belongs in a given partition from the parent to the appropriate partition. Optionally clone indexes. Optionally move the data to the limbo table instead.';
+IS 'Given a table and a lower_bound, move data that belongs in a given partition from the parent to the appropriate partition. Optionally clone indexes (strongly recommend doing this ONLY if this is the first time moving any data into this table as this is a lock escalation). Optionally move the data to the limbo table instead.';
 
 
 ---------------------------------------------------------------------
