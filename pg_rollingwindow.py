@@ -1218,7 +1218,7 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
     parser.add_option('--post_execute',
         help='if specified, a shell command to run after any verb. If used in conjunction with the every_n_seconds, this command will be run repeatedly for every invocation of the verb. If verb fails, this command will still be run. If pre-execute is specified and fails, this will not be run.')
 
-    postgres_group = OptionGroup(parser, 'PostgreSQL connection options', description='pg_rollingwindows makes an effort to support the same command line parameters and ENVIRONMENT variables as all other libpq based tools.')
+    postgres_group = OptionGroup(parser, 'PostgreSQL connection options', description='pg_rollingwindow makes an effort to support the same command line parameters and ENVIRONMENT variables as all other libpq based tools.')
     postgres_group.add_option('-h', '--host',
         help='Specifies the host name of the machine on which the server is running. If the value begins with a slash, it is used as the directory for the Unix-domain socket.')
     postgres_group.add_option('-d', '--dbname', dest='database',
