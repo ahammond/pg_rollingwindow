@@ -1175,8 +1175,13 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
 """
 
     parser = OptionParser(usage=usage, version=__vcs_id__, conflict_handler="resolve")
-    parser.add_option('-q', '--quiet', dest='quiet_count', action='count')
-    parser.add_option('-v', '--verbose', dest='verbose_count', action='count')
+    log_group = OptionGroup(parser, 'Logging options',
+        description='Default log level is WARNING. -q and -v are cumulative and reverse each other. -vvq would be the same as -v, which would be INFO level.')
+    log_group.add_option('-q', '--quiet', dest='quiet_count', action='count')
+    log_group.add_option('-v', '--verbose', dest='verbose_count', action='count')
+    log_group.add_option('--logfile', default=None,
+        help='if defined, instead of logging to stderr, append to this file')
+    parser.add_option_group(log_group)
 
     parser.add_option('-t', '--table',
         help='required for add: act on this particular table')
@@ -1190,7 +1195,7 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
         help='target number of non-empty partitions to keep around, the width of the window')
     parser.add_option('-a', '--partition_ahead',
         help='target number of empty reserve partitions to keep ahead of the window')
-    parser.add_option('-l', '--data_lag_window', default=0,
+    parser.add_option('--data_lag_window', default=0,
         help='partitions following the highest partition with data to hold back from freezing / dumping')
     parser.add_option('--cluster', action='store_true', default=False,
         help='CLUSTER partitions when freezing them')
@@ -1213,13 +1218,13 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
     parser.add_option('--post_execute',
         help='if specified, a shell command to run after any verb. If used in conjunction with the every_n_seconds, this command will be run repeatedly for every invocation of the verb. If verb fails, this command will still be run. If pre-execute is specified and fails, this will not be run.')
 
-    postgres_group = OptionGroup(parser, 'PostgreSQL connection options')
+    postgres_group = OptionGroup(parser, 'PostgreSQL connection options', description='pg_rollingwindow makes an effort to support the same command line parameters and ENVIRONMENT variables as all other libpq based tools.')
     postgres_group.add_option('-h', '--host',
         help='Specifies the host name of the machine on which the server is running. If the value begins with a slash, it is used as the directory for the Unix-domain socket.')
     postgres_group.add_option('-d', '--dbname', dest='database',
         help='Specifies the name of the database to connect to.')
     postgres_group.add_option('-p', '--port',
-        help="""Specifies the TCP port or the local Unix-domain socket file extension on which the server is listening for connections. Defaults to the value of the PGPORT environment variable or, if not set, to the port specified at compile time, usually 5432.""")
+        help='Specifies the TCP port or the local Unix-domain socket file extension on which the server is listening for connections. Defaults to the value of the PGPORT environment variable or, if not set, to the port specified at compile time, usually 5432.')
     postgres_group.add_option('-U', '--username',
         help='Connect to the database as the user username instead of the default. (You must have permission to do so, of course.)')
     postgres_group.add_option('-w', '--no-password', dest='password_prompt', action='store_false',
@@ -1230,11 +1235,11 @@ See http://www.postgresql.org/docs/current/static/libpq-envars.html')
 
     (options, args) = parser.parse_args()
     l = getLogger()
-    from logging import CRITICAL, ERROR, WARNING, INFO, DEBUG, StreamHandler, Formatter
-    console = StreamHandler()
+    from logging import CRITICAL, ERROR, WARNING, INFO, DEBUG, StreamHandler, FileHandler, Formatter
+    handler = StreamHandler() if options.logfile is None else FileHandler(options.logfile)
     formatter = Formatter('%(asctime)s %(name)s %(levelname)s %(filename)s:%(lineno)d: %(message)s')
-    console.setFormatter(formatter)
-    l.addHandler(console)
+    handler.setFormatter(formatter)
+    l.addHandler(handler)
     raw_log_level = 2   # default to warn level
     if options.verbose_count is not None: raw_log_level += options.verbose_count
     if options.quiet_count is not None:   raw_log_level -= options.quiet_count
