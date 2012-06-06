@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 from datetime import datetime, timedelta
+from functools import wraps
 from logging import getLogger
 from optparse import OptionParser, OptionGroup
 from os import access, environ, listdir, rename, R_OK, W_OK
@@ -1083,23 +1084,28 @@ def repeat(action, options):
     approximately ever_n_seconds.
     """
 
+    l = getLogger('repeat')
     run_interval = timedelta(seconds = float(options.every_n_seconds))
-
+    l.debug('run_interval: %r', run_interval)
     last_completion_time = datetime.utcnow()
     while True:
+        l.info('Running %s', action.__name__)
         action(options)
         # TODO: refactor this for easier UT
         this_completion_time = datetime.utcnow()
         run_time = this_completion_time - last_completion_time
         last_completion_time = this_completion_time
         wait_time = run_interval - run_time
+        l.info('Completed %s, took %r', action.__name__, run_interval)
         if wait_time.seconds > 0:
+            l.info('Waiting %s after running %s', wait_time, action.__name__)
             sleep(wait_time.seconds)
 
 ##########################################################################
 def wrap_post_execute(verb, post_execute):
     l = getLogger('post_execute')
     command = shlex_split(post_execute)
+    @wraps(verb)
     def wrapped_verb(*args, **kwargs):
         try:
             verb(*args, **kwargs)
@@ -1112,6 +1118,7 @@ def wrap_post_execute(verb, post_execute):
 def wrap_pre_execute(verb, pre_execute):
     l = getLogger('pre_execute')
     command = shlex_split(pre_execute)
+    @wraps(verb)
     def wrapped_verb(*args, **kwargs):
         l.debug('Executing %r', command)
         check_call(command)
