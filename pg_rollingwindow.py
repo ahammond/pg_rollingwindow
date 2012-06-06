@@ -1095,11 +1095,13 @@ def repeat(action, options):
         this_completion_time = datetime.utcnow()
         run_time = this_completion_time - last_completion_time
         last_completion_time = this_completion_time
-        wait_time = run_interval - run_time
         l.info('Completed %s, took %r', action.__name__, run_interval)
-        if wait_time.seconds > 0:
+        if run_time < run_interval:
+            wait_time = run_interval - run_time
             l.info('Waiting %s after running %s', wait_time, action.__name__)
             sleep(wait_time.seconds)
+        else:
+            l.debug('runtime > run_interval, so do not sleep')
 
 ##########################################################################
 def wrap_post_execute(verb, post_execute):
