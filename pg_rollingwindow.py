@@ -946,7 +946,7 @@ def roll(options):
             t.roll(vacuum_parent_after_every=options.vacuum_parent_after_every)
 
 ##########################################################################
-def list_table(db, schema, table, verbosity):
+def list_table(db, schema, table):
     def bytes_to_human(bytes):
         try:
             bytes = float(bytes)
@@ -960,7 +960,7 @@ def list_table(db, schema, table, verbosity):
 
     l = getLogger('list_table')
     t = RollingWindow(db, schema, table)
-    print 'Table %s.%s %s with about %d rows last rolled %s' % ( schema, table, bytes_to_human(t.parent_total_relation_size_in_bytes), t.parent_estimated_rows, t.rolled_on )
+    l.warning('Table %s.%s %s with about %d rows last rolled %s', schema, table, bytes_to_human(t.parent_total_relation_size_in_bytes), t.parent_estimated_rows, t.rolled_on )
     partition_count = 0
     sum_of_estimated_rows = t.parent_estimated_rows
     sum_of_total_relation_size_in_bytes = t.parent_total_relation_size_in_bytes
@@ -968,20 +968,19 @@ def list_table(db, schema, table, verbosity):
         partition_count += 1
         sum_of_estimated_rows += p.estimated_rows
         sum_of_total_relation_size_in_bytes += p.total_relation_size_in_bytes
-        if verbosity > 2:
-            print '  %s: %s with about %d rows.' % (p.partition_table_name, bytes_to_human(p.total_relation_size_in_bytes), p.estimated_rows)
-    print 'Total of %d partitions consuming %s with a total of about %d rows.' % (partition_count, bytes_to_human(sum_of_total_relation_size_in_bytes), sum_of_estimated_rows)
+        l.info('  %s: %s with about %d rows.', p.partition_table_name, bytes_to_human(p.total_relation_size_in_bytes), p.estimated_rows)
+    l.warning('Total of %d partitions consuming %s with a total of about %d rows.', partition_count, bytes_to_human(sum_of_total_relation_size_in_bytes), sum_of_estimated_rows)
 
 ##########################################################################
 def list(options):
     l = getLogger('list')
     l.debug('listing')
     if options.table is not None:   # I'm rolling a single table
-        list_table(options.db, options.schema, options.table, options.verbosity)
+        list_table(options.db, options.schema, options.table)
     else:
         m = MaintainedTables(options.db)
         for managed_table in m:
-            list_table(options.db, managed_table[0], managed_table[1], options.verbosity)
+            list_table(options.db, managed_table[0], managed_table[1])
 
 ##########################################################################
 def freeze_column(options):
@@ -1009,7 +1008,7 @@ def freeze_table(db, schema, table, cluster, vacuum_freeze):
         l.error('%s.%s is not managed. Stopping.', schema, table)
         return
     for f in t.freeze(cluster, vacuum_freeze):
-        print 'Partition %s.%s added %s' % (schema, f.partition_table_name, f.new_constraint)
+        l.info('Partition %s.%s added %s', schema, f.partition_table_name, f.new_constraint)
 
 ##########################################################################
 def freeze(options):
@@ -1038,7 +1037,7 @@ def dump_table(db, schema, table, dumper):
         return
     for eligible_partition in dumper.eligible_to_dump(t):
         dump_file = dumper.dump_table(t, eligible_partition.name, eligible_partition.schema_only)
-        print '%s.%s dumped to %s.' % (schema, table, dump_file)
+        l.info('%s.%s dumped to %s.', schema, table, dump_file)
 
 ##########################################################################
 def dump(options):
@@ -1057,7 +1056,7 @@ def restore_table(r, dumper):
     l = getLogger('restore_table')
     l.debug('Restoring %s.%s', r.schema, r.table)
     for eligible_file in dumper.files_eligible_to_restore(r):
-        print '%s.%s restoring file %s' % (r.schema, r.table, eligible_file)
+        l.info('%s.%s restoring file %s', r.schema, r.table, eligible_file)
         dumper.restore_file(r, eligible_file)
 
 ##########################################################################
