@@ -632,9 +632,9 @@ class TestPartitionDumper(OptionBase):
                 pg_rollingwindow.Partition('fake_table_0000000000000000040', 10, 10, True),
                 pg_rollingwindow.Partition('fake_table_0000000000000000050', 10, 10, True),
                 pg_rollingwindow.Partition('fake_table_0000000000000000060', 10, 10, True),
-                pg_rollingwindow.Partition('fake_table_0000000000000000070', 10, 10, True),
-                pg_rollingwindow.Partition('fake_table_0000000000000000080', 10, 10, True),
-                pg_rollingwindow.Partition('fake_table_0000000000000000090', 10, 10, True),
+                pg_rollingwindow.Partition('fake_table_0000000000000000070', 10, 10, False),
+                pg_rollingwindow.Partition('fake_table_0000000000000000080', 10, 10, False),
+                pg_rollingwindow.Partition('fake_table_0000000000000000090', 10, 10, False),
                 pg_rollingwindow.Partition('fake_table_limbo', 10, 10, False),
             ]
         _list_dir = [
@@ -782,8 +782,6 @@ class TestPartitionDumper(OptionBase):
         self.assertEqual([
             pg_rollingwindow.EligiblePartition('fake_table_0000000000000000050',False),
             pg_rollingwindow.EligiblePartition("fake_table_0000000000000000060",False),
-            pg_rollingwindow.EligiblePartition("fake_table_0000000000000000070",False),
-            pg_rollingwindow.EligiblePartition("fake_table_0000000000000000080",False)
         ], actual_results)
         log_calls = self.mock_getLogger.return_value.method_calls
         n = 0
@@ -852,7 +850,7 @@ class TestPartitionDumper(OptionBase):
         self.assertEqual({}, log_calls[n][2])
         n += 1
         self.assertEqual('debug', log_calls[n][0])
-        self.assertEqual(('%s looks eligible', 'fake_table_0000000000000000070'), log_calls[n][1])
+        self.assertEqual(('Skipping %s because it is freezable but is not yet frozen', 'fake_table_0000000000000000070'), log_calls[n][1])
         self.assertEqual({}, log_calls[n][2])
         n += 1
         self.assertEqual('debug', log_calls[n][0])
@@ -860,7 +858,7 @@ class TestPartitionDumper(OptionBase):
         self.assertEqual({}, log_calls[n][2])
         n += 1
         self.assertEqual('debug', log_calls[n][0])
-        self.assertEqual(('%s looks eligible', 'fake_table_0000000000000000080'), log_calls[n][1])
+        self.assertEqual(('Skipping %s because it is freezable but is not yet frozen', 'fake_table_0000000000000000080'), log_calls[n][1])
         self.assertEqual({}, log_calls[n][2])
         n += 1
         self.assertEqual('debug', log_calls[n][0])
@@ -868,7 +866,15 @@ class TestPartitionDumper(OptionBase):
         self.assertEqual({}, log_calls[n][2])
         n += 1
         self.assertEqual('debug', log_calls[n][0])
-        self.assertEqual(('%s is higher than %s, so we have dumped all the freezable tables.', 'fake_table_0000000000000000090', 'fake_table_0000000000000000080'), log_calls[n][1])
+        self.assertEqual(('Skipping %s because it is freezable but is not yet frozen', 'fake_table_0000000000000000090'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Considering %s for eligibility', 'fake_table_limbo'), log_calls[n][1])
+        self.assertEqual({}, log_calls[n][2])
+        n += 1
+        self.assertEqual('debug', log_calls[n][0])
+        self.assertEqual(('Skipping limbo partition',), log_calls[n][1])
         self.assertEqual({}, log_calls[n][2])
         n += 1
         self.assertEqual(n, len(log_calls))
