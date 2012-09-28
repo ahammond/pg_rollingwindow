@@ -886,7 +886,16 @@ class TestPartitionDumper(OptionBase):
         self.mock_RollingWindow.highest_freezable = None
         actual_results = [e for e in self.target.eligible_to_dump(self.mock_RollingWindow)]
         self.verify(o)
-        self.assertEqual([pg_rollingwindow.EligiblePartition('fake_table', True)], actual_results)
+        self.assertEqual([
+            pg_rollingwindow.EligiblePartition('fake_table', True),
+            pg_rollingwindow.EligiblePartition('fake_table_0000000000000000000',False),
+            pg_rollingwindow.EligiblePartition('fake_table_0000000000000000010',False),
+            pg_rollingwindow.EligiblePartition('fake_table_0000000000000000020',False),
+            pg_rollingwindow.EligiblePartition('fake_table_0000000000000000030',False),
+            pg_rollingwindow.EligiblePartition('fake_table_0000000000000000040',False),
+            pg_rollingwindow.EligiblePartition('fake_table_0000000000000000050',False),
+            pg_rollingwindow.EligiblePartition('fake_table_0000000000000000060',False),
+            ], actual_results)
         log_calls = self.mock_getLogger.return_value.method_calls
         n = 0
         self.assertEqual('debug', log_calls[n][0])
@@ -896,8 +905,6 @@ class TestPartitionDumper(OptionBase):
         self.assertEqual('info', log_calls[n][0])
         self.assertEqual(('Parent table is eligible', ), log_calls[n][1])
         self.assertEqual({}, log_calls[n][2])
-        n += 1
-        self.assertEqual(n, len(log_calls))
 
     def test_dump_skips_strange_partition(self):
         o = dict(database='fake_db', host='fake_host', port='fake_port', dump_directory='fake_dumpdir', pg_path='fake_path')
