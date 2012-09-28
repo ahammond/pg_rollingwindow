@@ -899,14 +899,14 @@ class TestPartitionDumper(OptionBase):
         _partitions = [
                 pg_rollingwindow.Partition('a_weird_partition', 10, 10, False),
                 pg_rollingwindow.Partition('fake_table_0000000000000000000', 10, 10, True),
-                pg_rollingwindow.Partition('fake_table_0000000000000000010', 10, 10, True),
+                pg_rollingwindow.Partition('fake_table_0000000000000000010', 10, 10, False),
         ]
         self.mock_RollingWindow.partitions.return_value.__iter__.return_value = iter(_partitions)
         self.mock_RollingWindow.last_partition_dumped = 0
         self.mock_RollingWindow.highest_freezable = 'fake_table_0000000000000000000'
         actual_results = [e for e in self.target.eligible_to_dump(self.mock_RollingWindow)]
         self.verify(o)
-#        self.assertEqual([pg_rollingwindow.EligiblePartition('fake_table_0000010', True)], actual_results)
+        self.assertEqual([], actual_results)
         log_calls = self.mock_getLogger.return_value.method_calls
         n = 0
         self.assertEqual('debug', log_calls[n][0])
@@ -934,7 +934,7 @@ class TestPartitionDumper(OptionBase):
         self.assertEqual({}, log_calls[n][2])
         n += 1
         self.assertEqual('debug', log_calls[n][0])
-        self.assertEqual(('%s is higher than %s, so we have dumped all the freezable tables.', 'fake_table_0000000000000000010', 'fake_table_0000000000000000000'), log_calls[n][1])
+        self.assertEqual(('Skipping %s because it is freezable but is not yet frozen', 'fake_table_0000000000000000010'), log_calls[n][1])
         self.assertEqual({}, log_calls[n][2])
         n += 1
         self.assertEqual(n, len(log_calls))
