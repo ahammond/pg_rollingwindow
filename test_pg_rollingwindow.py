@@ -10,7 +10,7 @@ import optparse
 from logging import RootLogger, getLogger
 import os
 from mock import Mock, MagicMock, sentinel
-from patched_unittest2 import *
+from lib.patched_unittest.patched_unittest import PatchedTestCase
 from subprocess import Popen, call
 
 import pg_rollingwindow
