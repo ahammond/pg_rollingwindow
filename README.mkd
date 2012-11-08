@@ -57,7 +57,7 @@ Or, you could create and manage your own partition tables to manage this data.
 
 ## REQUIREMENTS
 * PostgreSQL 9.1 (uses the format() function)
-* Python 2.6 (possibly works with 2.5 or even 2.4, but... not tested)
+* Python 2.7
 * psycopg2
 * Python unit testing (developers only)
 * Mock (http://www.voidspace.org.uk/python/mock/)
