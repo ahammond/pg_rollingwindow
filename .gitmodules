@@ -1,3 +1,3 @@
 [submodule "lib/patched_unittest"]
 	path = lib/patched_unittest
-	url = git@github.com:ahammond/patched_unittest.git
+	url = https://github.com/ahammond/patched_unittest.git
