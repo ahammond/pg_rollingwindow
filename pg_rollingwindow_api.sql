@@ -1113,7 +1113,7 @@ BEGIN
     END;
 END;
 $definition$ LANGUAGE plpgsql;
-COMMENT ON FUNCTION set_freeze_column(oid, name, text)
+COMMENT ON FUNCTION set_freeze_column(oid, name, text, int)
 IS 'Set a freeze column. Returns true if UPDATEd, false if INSERTed. This would be a single call to MERGE if PostgreSQL supported it.';
 
 
