@@ -56,6 +56,14 @@ Or, you could delete stuff older than the oldest partition (this seems reasonabl
 Or, you could create and manage your own partition tables to manage this data.
 
 ## REQUIREMENTS
+
+Python requirements installed using
+
+``bash
+mkvirtualenv --python=python2.7 pg_rollingwindow2.7
+pip install -r requirements.txt
+```
+
 * PostgreSQL 9.1 (uses the format() function)
 * Python 2.7
 * psycopg2
