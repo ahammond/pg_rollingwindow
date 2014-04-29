@@ -1,3 +1,0 @@
-[submodule "lib/patched_unittest"]
-	path = lib/patched_unittest
-	url = https://github.com/ahammond/patched_unittest.git

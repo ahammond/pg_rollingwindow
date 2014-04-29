@@ -10,11 +10,12 @@ import optparse
 from logging import RootLogger, getLogger
 import os
 from mock import Mock, MagicMock, sentinel
-from lib.patched_unittest.patched_unittest import PatchedTestCase
+from patched_unittest import PatchedTestCase
 from subprocess import Popen, call
 
 import pg_rollingwindow
 import psycopg2
+
 
 class OptionBase(PatchedTestCase):
     def optionize(self, connect_parameters):
