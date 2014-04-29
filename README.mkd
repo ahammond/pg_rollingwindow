@@ -2,6 +2,9 @@
 
 A tool to maintain rolling windows in PostgreSQL.
 
+[![Build Status](https://travis-ci.org/ahammond/pg_rollingwindow.svg?branch=master)](https://travis-ci.org/ahammond/pg_rollingwindow?branch=master)
+[![Coverage Status](https://coveralls.io/repos/ahammond/pg_rollingwindow/badge.png?branch=master)](https://coveralls.io/r/ahammond/pg_rollingwindow?branch=master)
+
 ## What do you mean by "Rolling Window"?
 
 A rolling window is tabular data with the following characteristics.
